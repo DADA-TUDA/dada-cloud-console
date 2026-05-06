@@ -88,6 +88,8 @@ func (w *Worker) claimNextOperation(ctx context.Context) (*models.Operation, err
 	defer tx.Rollback(ctx)
 
 	var op models.Operation
+	// Nullable string columns must be scanned into *string to handle NULL.
+	var gitCommit, gitPath, argoApp, errorCode, errorMessage *string
 	err = tx.QueryRow(ctx, `
         SELECT o.id, o.actor_id, o.project_id, o.environment_id, o.action,
                o.resource_kind, o.resource_name, o.status, o.payload,
@@ -101,9 +103,24 @@ func (w *Worker) claimNextOperation(ctx context.Context) (*models.Operation, err
     `).Scan(
 		&op.ID, &op.ActorID, &op.ProjectID, &op.EnvironmentID, &op.Action,
 		&op.ResourceKind, &op.ResourceName, &op.Status, &op.Payload,
-		&op.ValidationResult, &op.GitCommit, &op.GitPath, &op.ArgoApplication,
-		&op.ErrorCode, &op.ErrorMessage, &op.CreatedAt, &op.UpdatedAt,
+		&op.ValidationResult, &gitCommit, &gitPath, &argoApp,
+		&errorCode, &errorMessage, &op.CreatedAt, &op.UpdatedAt,
 	)
+	if gitCommit != nil {
+		op.GitCommit = *gitCommit
+	}
+	if gitPath != nil {
+		op.GitPath = *gitPath
+	}
+	if argoApp != nil {
+		op.ArgoApplication = *argoApp
+	}
+	if errorCode != nil {
+		op.ErrorCode = *errorCode
+	}
+	if errorMessage != nil {
+		op.ErrorMessage = *errorMessage
+	}
 	if err != nil {
 		if err.Error() == "no rows in result set" {
 			return nil, nil

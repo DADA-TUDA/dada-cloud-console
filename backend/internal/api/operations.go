@@ -10,6 +10,41 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// scanOperation scans a row into an Operation, handling nullable string columns safely.
+func scanOperation(scanner interface {
+	Scan(dest ...any) error
+}, op *models.Operation) error {
+	var gitCommit, gitPath, argoApp, errorCode, errorMessage *string
+	var envID *uuid.UUID
+	err := scanner.Scan(
+		&op.ID, &op.ActorID, &op.ProjectID, &envID,
+		&op.Action, &op.ResourceKind, &op.ResourceName,
+		&op.Status, &op.Payload, &op.ValidationResult,
+		&gitCommit, &gitPath, &argoApp,
+		&errorCode, &errorMessage, &op.CreatedAt, &op.UpdatedAt,
+	)
+	if err != nil {
+		return err
+	}
+	op.EnvironmentID = envID
+	if gitCommit != nil {
+		op.GitCommit = *gitCommit
+	}
+	if gitPath != nil {
+		op.GitPath = *gitPath
+	}
+	if argoApp != nil {
+		op.ArgoApplication = *argoApp
+	}
+	if errorCode != nil {
+		op.ErrorCode = *errorCode
+	}
+	if errorMessage != nil {
+		op.ErrorMessage = *errorMessage
+	}
+	return nil
+}
+
 // GetOperation returns the current state of an async platform operation.
 func (h *Handler) GetOperation(c *gin.Context) {
 	claims, ok := auth.GetClaims(c)
@@ -41,24 +76,17 @@ func (h *Handler) GetOperation(c *gin.Context) {
 	}
 
 	var op models.Operation
-	err = h.pool.QueryRow(c.Request.Context(),
+	row := h.pool.QueryRow(c.Request.Context(),
 		`SELECT id, actor_id, project_id, environment_id, action, resource_kind, resource_name,
 		        status, payload, validation_result, git_commit, git_path, argo_application,
 		        error_code, error_message, created_at, updated_at
 		 FROM operations WHERE id = $1 AND project_id = $2`,
 		operationID, projectID,
-	).Scan(
-		&op.ID, &op.ActorID, &op.ProjectID, &op.EnvironmentID,
-		&op.Action, &op.ResourceKind, &op.ResourceName,
-		&op.Status, &op.Payload, &op.ValidationResult,
-		&op.GitCommit, &op.GitPath, &op.ArgoApplication,
-		&op.ErrorCode, &op.ErrorMessage, &op.CreatedAt, &op.UpdatedAt,
 	)
-	if err == pgx.ErrNoRows {
+	if err = scanOperation(row, &op); err == pgx.ErrNoRows {
 		respondNotFound(c)
 		return
-	}
-	if err != nil {
+	} else if err != nil {
 		respondError(c, http.StatusInternalServerError, "failed to fetch operation")
 		return
 	}
@@ -122,7 +150,7 @@ func (h *Handler) RetryOperation(c *gin.Context) {
 
 	// Reset to Queued
 	var op models.Operation
-	err = h.pool.QueryRow(c.Request.Context(),
+	retryRow := h.pool.QueryRow(c.Request.Context(),
 		`UPDATE operations
 		 SET status = 'Queued', updated_at = NOW()
 		 WHERE id = $1 AND project_id = $2
@@ -130,14 +158,8 @@ func (h *Handler) RetryOperation(c *gin.Context) {
 		           status, payload, validation_result, git_commit, git_path, argo_application,
 		           error_code, error_message, created_at, updated_at`,
 		operationID, projectID,
-	).Scan(
-		&op.ID, &op.ActorID, &op.ProjectID, &op.EnvironmentID,
-		&op.Action, &op.ResourceKind, &op.ResourceName,
-		&op.Status, &op.Payload, &op.ValidationResult,
-		&op.GitCommit, &op.GitPath, &op.ArgoApplication,
-		&op.ErrorCode, &op.ErrorMessage, &op.CreatedAt, &op.UpdatedAt,
 	)
-	if err != nil {
+	if err = scanOperation(retryRow, &op); err != nil {
 		respondError(c, http.StatusInternalServerError, "failed to retry operation")
 		return
 	}

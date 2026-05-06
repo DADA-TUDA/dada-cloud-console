@@ -183,13 +183,7 @@ func (h *Handler) GetProjectOperations(c *gin.Context) {
 	var ops []models.Operation
 	for rows.Next() {
 		var op models.Operation
-		if err := rows.Scan(
-			&op.ID, &op.ActorID, &op.ProjectID, &op.EnvironmentID,
-			&op.Action, &op.ResourceKind, &op.ResourceName,
-			&op.Status, &op.Payload, &op.ValidationResult,
-			&op.GitCommit, &op.GitPath, &op.ArgoApplication,
-			&op.ErrorCode, &op.ErrorMessage, &op.CreatedAt, &op.UpdatedAt,
-		); err != nil {
+		if err := scanOperation(rows, &op); err != nil {
 			respondError(c, http.StatusInternalServerError, "failed to scan operation")
 			return
 		}

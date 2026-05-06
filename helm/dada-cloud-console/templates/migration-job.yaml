@@ -1,0 +1,27 @@
+{{- if .Values.migrationJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "dada-cloud-console.fullname" . }}-migrate
+  labels:
+    {{- include "dada-cloud-console.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "dada-cloud-console.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.migrationJob.image.repository }}:{{ .Values.migrationJob.image.tag }}"
+          command:
+            {{- toYaml .Values.migrationJob.command | nindent 12 }}
+          envFrom:
+            - secretRef:
+                name: {{ default (printf "%s-backend" (include "dada-cloud-console.fullname" .)) .Values.backend.existingSecret }}
+{{- end }}

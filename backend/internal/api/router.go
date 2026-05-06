@@ -55,10 +55,10 @@ func SetupRouter(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		api.POST("/projects/:projectId/operations/:operationId/retry", h.RetryOperation)
 	}
 
-	// Health check (unauthenticated)
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	// Health check (unauthenticated) — /health for Helm probes, /healthz for k8s convention
+	healthHandler := func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) }
+	r.GET("/health", healthHandler)
+	r.GET("/healthz", healthHandler)
 
 	return r
 }

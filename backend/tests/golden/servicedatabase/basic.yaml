@@ -1,0 +1,18 @@
+apiVersion: platform.dada-tuda.ru/v1alpha1
+kind: ServiceDatabase
+metadata:
+  name: codex-lb-db
+  namespace: internal-prod
+  labels:
+    dada.io/project: internal
+    dada.io/environment: prod
+    dada.io/operation: op-test-1234
+spec:
+  appRef:
+    name: codex-lb
+  engine: postgres
+  database: codexlb
+  backup:
+    enabled: false
+    schedule: daily
+    retention: 14d

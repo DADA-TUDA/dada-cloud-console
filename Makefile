@@ -1,4 +1,4 @@
-.PHONY: help dev dev-db dev-backend dev-frontend dev-init stop clean build-backend build-frontend test-backend
+.PHONY: help dev dev-db dev-backend dev-frontend dev-init stop clean build-backend build-frontend test-backend test helm-lint helm-render
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -34,3 +34,15 @@ build-frontend: ## Build frontend for production
 
 test-backend: ## Run backend tests
 	@cd backend && go test ./...
+
+test: test-backend ## Run all tests (backend unit + golden manifests)
+	@echo "All tests passed."
+
+helm-lint: ## Lint the Helm chart
+	helm lint helm/dada-cloud-console
+
+helm-render: ## Render Helm chart to stdout (smoke check)
+	helm template dada-cloud-console helm/dada-cloud-console \
+	  --namespace devops-tools \
+	  --set backend.image.tag=dev \
+	  --set frontend.image.tag=dev

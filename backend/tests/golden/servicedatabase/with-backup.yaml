@@ -1,0 +1,18 @@
+apiVersion: platform.dada-tuda.ru/v1alpha1
+kind: ServiceDatabase
+metadata:
+  name: profi-db
+  namespace: client-a-prod
+  labels:
+    dada.io/project: client-a
+    dada.io/environment: prod
+    dada.io/operation: op-test-5678
+spec:
+  appRef:
+    name: profi-backend
+  engine: postgres
+  database: profi
+  backup:
+    enabled: true
+    schedule: daily
+    retention: 7d
