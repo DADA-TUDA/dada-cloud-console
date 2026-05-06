@@ -2,7 +2,7 @@ import * as React from "react";
 import { clsx } from "clsx";
 import type { OperationStatus } from "@/lib/types";
 
-const statusColorMap: Record<OperationStatus, string> = {
+const statusColorMap: Record<string, string> = {
   Created: "bg-gray-100 text-gray-800",
   Validated: "bg-blue-100 text-blue-800",
   Queued: "bg-yellow-100 text-yellow-800",
@@ -19,7 +19,7 @@ const statusColorMap: Record<OperationStatus, string> = {
 };
 
 interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  status?: OperationStatus;
+  status?: OperationStatus | string;
 }
 
 export function Badge({ status, className, children, ...props }: BadgeProps) {

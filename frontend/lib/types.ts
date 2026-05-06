@@ -1,97 +1,92 @@
-// TypeScript types matching the Go backend models.
+export type MemberRole = "platform-admin" | "developer" | "client-admin" | "client-viewer";
 
-export type UserRole =
-  | "platform_admin"
-  | "project_owner"
-  | "developer"
-  | "viewer";
+export type OperationStatus =
+  | "Created" | "Validated" | "Queued" | "Rendering"
+  | "CommittingToGit" | "Committed" | "WaitingForArgoSync"
+  | "Syncing" | "Reconciling" | "Ready" | "Failed"
+  | "Cancelled" | "WaitingForApproval";
 
 export interface User {
   id: string;
+  username: string;
   email: string;
   display_name: string;
-  role: UserRole;
-  active: boolean;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface Project {
   id: string;
   name: string;
-  slug: string;
-  description: string;
-  owner_id: string;
+  display_name: string;
+  owner_type: string;
+  default_environment: string;
   created_at: string;
   updated_at: string;
+  role?: MemberRole;
 }
 
 export interface Environment {
   id: string;
   project_id: string;
   name: string;
-  slug: string;
-  cluster: string;
   namespace: string;
+  type: "dev" | "prod";
   created_at: string;
-  updated_at: string;
 }
-
-export type OperationStatus =
-  | "Created"
-  | "Validated"
-  | "Queued"
-  | "Rendering"
-  | "CommittingToGit"
-  | "Committed"
-  | "WaitingForArgoSync"
-  | "Syncing"
-  | "Reconciling"
-  | "Ready"
-  | "Failed"
-  | "Cancelled"
-  | "WaitingForApproval";
-
-export type OperationKind =
-  | "CreateServiceDatabase"
-  | "UpdateServiceDatabase"
-  | "DeleteServiceDatabase"
-  | "CreateApplication"
-  | "UpdateApplication"
-  | "DeleteApplication"
-  | "CreateServiceEndpoint"
-  | "UpdateServiceEndpoint"
-  | "DeleteServiceEndpoint";
 
 export interface Operation {
   id: string;
+  actor_id: string;
   project_id: string;
-  environment_id: string;
-  kind: OperationKind;
+  environment_id?: string;
+  action: string;
+  resource_kind: string;
+  resource_name: string;
   status: OperationStatus;
-  resource_id: string;
-  resource_type: string;
-  git_commit_sha?: string;
+  payload?: Record<string, unknown>;
+  git_commit?: string;
+  git_path?: string;
+  argo_application?: string;
+  error_code?: string;
   error_message?: string;
-  created_by: string;
   created_at: string;
   updated_at: string;
 }
 
-export interface ServiceDatabase {
+export interface ResourceSnapshot {
   id: string;
-  name: string;
   project_id: string;
-  environment_id: string;
-  engine: string;
-  version: string;
-  storage_gb: number;
-  replicas: number;
-  status: OperationStatus;
-  created_at: string;
-  updated_at: string;
+  environment_id?: string;
+  kind: string;
+  name: string;
+  phase?: string;
+  summary_json: Record<string, unknown>;
+  last_synced_at: string;
 }
 
-export interface ApiError {
-  error: string;
+export interface LoginResponse {
+  token: string;
+  user: User;
+}
+
+export interface ProjectsResponse {
+  projects: Project[];
+}
+
+export interface ProjectDetailResponse {
+  project: Project;
+  environments: Environment[];
+  role: MemberRole;
+}
+
+export interface DatabasesResponse {
+  databases: ResourceSnapshot[];
+}
+
+export interface CreateDatabaseResponse {
+  operation: Operation;
+  message: string;
+}
+
+export interface OperationsResponse {
+  operations: Operation[];
 }
