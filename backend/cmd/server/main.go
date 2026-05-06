@@ -33,6 +33,15 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to load config")
 	}
 
+	// Configure logging based on dev mode
+	if cfg.DevMode {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+	}
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	if cfg.LogLevel == "debug" {
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	}
+
 	pool, err := db.Connect(context.Background(), cfg.DBURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to connect to database")

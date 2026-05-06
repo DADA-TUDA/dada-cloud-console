@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http"
+
 	"github.com/dada-tuda/console/backend/internal/auth"
 	"github.com/dada-tuda/console/backend/internal/config"
 	"github.com/gin-gonic/gin"
@@ -15,6 +17,18 @@ func SetupRouter(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 
 	r := gin.New()
 	r.Use(gin.Recovery())
+
+	// CORS middleware
+	r.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Authorization")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	})
 
 	h := NewHandler(pool, cfg)
 
