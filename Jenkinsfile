@@ -1,98 +1,324 @@
-pipeline {
-  agent any
+def GO_VERSION   = '1.22'
+def NODE_VERSION = '20'
 
-  options {
-    timestamps()
-    disableConcurrentBuilds()
-    buildDiscarder(logRotator(numToKeepStr: '20'))
-  }
+def GO_BUILDER_IMAGE   = "golang:${GO_VERSION}-alpine"
+def NODE_BUILDER_IMAGE = "node:${NODE_VERSION}-bookworm"
+def DOCKER_CLI_IMAGE   = 'docker:29-cli'
+def DOCKER_DIND_IMAGE  = 'docker:29-dind'
 
-  parameters {
-    string(name: 'IMAGE_TAG', defaultValue: '', description: 'Override image tag. Empty = short git SHA')
-    booleanParam(name: 'PUSH_IMAGES', defaultValue: true, description: 'Push images to Nexus')
-  }
+def NEXUS_REGISTRY  = 'nexus.dada-tuda.ru'
+def NEXUS_NAMESPACE = 'dada'
+def BACKEND_IMAGE   = "${NEXUS_REGISTRY}/${NEXUS_NAMESPACE}/dada-cloud-console-backend"
+def FRONTEND_IMAGE  = "${NEXUS_REGISTRY}/${NEXUS_NAMESPACE}/dada-cloud-console-frontend"
 
-  environment {
-    NEXUS_REGISTRY = 'nexus.dada-tuda.ru'
-    NEXUS_NAMESPACE = 'dada'
-    BACKEND_IMAGE = "${NEXUS_REGISTRY}/${NEXUS_NAMESPACE}/dada-cloud-console-backend"
-    FRONTEND_IMAGE = "${NEXUS_REGISTRY}/${NEXUS_NAMESPACE}/dada-cloud-console-frontend"
-  }
+def podLabel  = "kubeagent-${env.JOB_BASE_NAME ?: 'job'}-${env.BUILD_NUMBER ?: 'manual'}"
+        .replaceAll('[^A-Za-z0-9-]', '-')
+        .toLowerCase()
+def agentName = "kubeagent-${env.JOB_BASE_NAME}-${env.BUILD_NUMBER}-${UUID.randomUUID().toString().take(6)}"
 
-  stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
+properties([disableConcurrentBuilds(abortPrevious: true)])
 
-    stage('Resolve version') {
-      steps {
-        script {
-          env.GIT_SHA_SHORT = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
-          env.RESOLVED_TAG = params.IMAGE_TAG?.trim() ? params.IMAGE_TAG.trim() : env.GIT_SHA_SHORT
+podTemplate(
+        cloud: 'self-managed',
+        label: podLabel,
+        namespace: 'devops-tools',
+        serviceAccount: 'jenkins-admin',
+        yaml: """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${agentName}
+  annotations:
+    argocd.argoproj.io/tracking-id: "jenkins-common:/Pod:devops-tools/${agentName}"
+  labels:
+    app.kubernetes.io/name: jenkins-agent
+    app.kubernetes.io/part-of: dada-cloud-console
+    app.kubernetes.io/managed-by: jenkins
+spec:
+  securityContext:
+    fsGroup: 1000
+  volumes:
+    - name: workspace-volume
+      emptyDir:
+        sizeLimit: 3Gi
+    - name: go-cache
+      emptyDir:
+        sizeLimit: 2Gi
+    - name: go-mod-cache
+      emptyDir:
+        sizeLimit: 2Gi
+    - name: npm-cache
+      emptyDir:
+        sizeLimit: 1Gi
+    - name: docker-graph-storage
+      emptyDir:
+        sizeLimit: 8Gi
+    - name: docker-certs
+      emptyDir: {}
+    - name: tools-volume
+      emptyDir: {}
+  containers:
+    - name: jnlp
+      image: jenkins/inbound-agent:latest
+      tty: true
+      workingDir: /home/jenkins/agent
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "128Mi"
+        limits:
+          cpu: "300m"
+          memory: "256Mi"
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+        - name: tools-volume
+          mountPath: /tools
+
+    - name: go-builder
+      image: ${GO_BUILDER_IMAGE}
+      command: ['cat']
+      tty: true
+      workingDir: /home/jenkins/agent
+      env:
+        - name: HOME
+          value: /tmp
+        - name: GOPATH
+          value: /tmp/go
+        - name: GOCACHE
+          value: /tmp/.cache/go-build
+        - name: GOMODCACHE
+          value: /tmp/go/pkg/mod
+        - name: CGO_ENABLED
+          value: "0"
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "2000m"
+          memory: "2Gi"
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+        - name: go-cache
+          mountPath: /tmp/.cache/go-build
+        - name: go-mod-cache
+          mountPath: /tmp/go/pkg/mod
+        - name: tools-volume
+          mountPath: /tools
+
+    - name: node-builder
+      image: ${NODE_BUILDER_IMAGE}
+      command: ['cat']
+      tty: true
+      workingDir: /home/jenkins/agent
+      env:
+        - name: HOME
+          value: /tmp
+        - name: NPM_CONFIG_CACHE
+          value: /tmp/.cache/npm
+        - name: NEXT_TELEMETRY_DISABLED
+          value: "1"
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "2000m"
+          memory: "2Gi"
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+        - name: npm-cache
+          mountPath: /tmp/.cache/npm
+
+    - name: docker
+      image: ${DOCKER_CLI_IMAGE}
+      command: ['sh', '-c', 'cat']
+      tty: true
+      workingDir: /home/jenkins/agent
+      env:
+        - name: HOME
+          value: /tmp
+        - name: DOCKER_HOST
+          value: tcp://localhost:2375
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      resources:
+        requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
+          cpu: "250m"
+          memory: "128Mi"
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+        - name: tools-volume
+          mountPath: /tools
+
+    - name: dind
+      image: ${DOCKER_DIND_IMAGE}
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      args:
+        - --host=tcp://0.0.0.0:2375
+        - --host=unix:///var/run/docker.sock
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+        limits:
+          cpu: "2000m"
+          memory: "3Gi"
+      volumeMounts:
+        - name: docker-graph-storage
+          mountPath: /var/lib/docker
+        - name: docker-certs
+          mountPath: /certs
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
+"""
+) {
+    node(podLabel) {
+        cleanWs()
+
+        def commitAuthor  = ''
+        def commitMessage = ''
+        def resolvedTag   = ''
+        def currentStageName = 'bootstrap'
+
+        def runStage = { String name, Closure body ->
+            currentStageName = name
+            stage(name) { body() }
         }
-        echo "Resolved image tag: ${env.RESOLVED_TAG}"
-      }
-    }
 
-    stage('Backend test') {
-      steps {
-        dir('backend') {
-          sh 'go test ./...'
+        try {
+            runStage('Checkout') {
+                checkout scm
+                commitAuthor  = sh(script: "git log -1 --pretty=format:'%an'", returnStdout: true).trim()
+                commitMessage = sh(script: "git log -1 --pretty=format:'%s'", returnStdout: true).trim()
+                def sha       = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                def tagOnHead = sh(script: 'git tag --points-at HEAD', returnStdout: true).trim()
+                resolvedTag   = tagOnHead ?: sha
+                env.RESOLVED_TAG = resolvedTag
+                echo "Image tag: ${resolvedTag}  (commit: ${sha})"
+            }
+
+            // ── Go backend ────────────────────────────────────────────────
+            container('go-builder') {
+                runStage('Toolchain (Go)') {
+                    sh '''
+                        set -eux
+                        go version
+                        apk add --no-cache helm git >/dev/null 2>&1 || true
+                        helm version --short
+                    '''
+                }
+
+                runStage('Backend tests') {
+                    dir('backend') {
+                        sh 'go test ./... -count=1'
+                    }
+                }
+
+                runStage('Backend build') {
+                    dir('backend') {
+                        sh 'go build -ldflags="-s -w" -o bin/server ./cmd/server'
+                    }
+                }
+
+                runStage('Helm lint + render') {
+                    sh """
+                        set -eux
+                        helm lint helm/dada-cloud-console
+                        helm template dada-cloud-console helm/dada-cloud-console \
+                          --namespace devops-tools \
+                          --set backend.image.tag=${resolvedTag} \
+                          --set frontend.image.tag=${resolvedTag} \
+                          > /tmp/dada-cloud-console-rendered.yaml
+                        echo "Rendered \$(wc -l < /tmp/dada-cloud-console-rendered.yaml) lines"
+                    """
+                }
+            }
+
+            // ── Node.js frontend ──────────────────────────────────────────
+            container('node-builder') {
+                runStage('Frontend install') {
+                    dir('frontend') {
+                        sh 'npm ci'
+                    }
+                }
+
+                runStage('Frontend typecheck + build') {
+                    dir('frontend') {
+                        sh '''
+                            set -eux
+                            node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)" \
+                              && npm run typecheck || echo "No typecheck script — skip"
+                            npm run build
+                        '''
+                    }
+                }
+            }
+
+            // ── Docker ────────────────────────────────────────────────────
+            container('docker') {
+                runStage('Docker build') {
+                    sh """
+                        set -eux
+                        docker version
+                        docker build \\
+                          -t ${BACKEND_IMAGE}:${resolvedTag} \\
+                          -f backend/Dockerfile backend
+                        docker build \\
+                          -t ${FRONTEND_IMAGE}:${resolvedTag} \\
+                          -f frontend/Dockerfile frontend
+                    """
+                }
+
+                // Push only on integration branches, not PRs
+                def isPullRequest = (env.CHANGE_ID != null && env.CHANGE_ID != '')
+                def shouldPush = !isPullRequest && (
+                        env.BRANCH_NAME == 'main' ||
+                        env.BRANCH_NAME == 'master' ||
+                        env.BRANCH_NAME == 'develop'
+                )
+
+                if (shouldPush) {
+                    runStage('Docker push') {
+                        withCredentials([usernamePassword(
+                                credentialsId: 'docker-nexus-admin-psws',
+                                usernameVariable: 'DOCKER_USERNAME',
+                                passwordVariable: 'DOCKER_LOGIN'
+                        )]) {
+                            sh """
+                                set -eux
+                                echo "\${DOCKER_LOGIN}" | docker login ${NEXUS_REGISTRY} -u \${DOCKER_USERNAME} --password-stdin
+                                docker push ${BACKEND_IMAGE}:${resolvedTag}
+                                docker push ${FRONTEND_IMAGE}:${resolvedTag}
+                                docker rmi ${BACKEND_IMAGE}:${resolvedTag} ${FRONTEND_IMAGE}:${resolvedTag} || true
+                            """
+                        }
+                    }
+                } else {
+                    echo "Docker push skipped (PR or non-deploy branch)"
+                }
+            }
+
+        } catch (err) {
+            currentBuild.result = 'FAILURE'
+            throw err
         }
-      }
-    }
 
-    stage('Frontend build check') {
-      steps {
-        dir('frontend') {
-          sh 'npm ci'
-          sh 'npm run build'
+        if (currentBuild.result != 'FAILURE') {
+            echo "✅ DADA Cloud Console — ${resolvedTag}"
+            echo "   Backend:  ${BACKEND_IMAGE}:${resolvedTag}"
+            echo "   Frontend: ${FRONTEND_IMAGE}:${resolvedTag}"
         }
-      }
     }
-
-    stage('Docker build') {
-      steps {
-        sh '''
-          docker build -t ${BACKEND_IMAGE}:${RESOLVED_TAG} -f backend/Dockerfile backend
-          docker build -t ${FRONTEND_IMAGE}:${RESOLVED_TAG} -f frontend/Dockerfile frontend
-        '''
-      }
-    }
-
-    stage('Docker push') {
-      when { expression { return params.PUSH_IMAGES } }
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'docker-nexus-admin-psws', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_LOGIN')]) {
-          sh '''
-            echo "${DOCKER_LOGIN}" | docker login ${NEXUS_REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
-            docker push ${BACKEND_IMAGE}:${RESOLVED_TAG}
-            docker push ${FRONTEND_IMAGE}:${RESOLVED_TAG}
-          '''
-        }
-      }
-    }
-
-    stage('Render Helm') {
-      steps {
-        sh '''
-          helm lint helm/dada-cloud-console
-          helm template dada-cloud-console helm/dada-cloud-console \
-            --namespace devops-tools \
-            --set global.imageRegistry=${NEXUS_REGISTRY}/${NEXUS_NAMESPACE} \
-            --set backend.image.tag=${RESOLVED_TAG} \
-            --set frontend.image.tag=${RESOLVED_TAG} \
-            > /tmp/dada-cloud-console-rendered.yaml
-        '''
-      }
-    }
-  }
-
-  post {
-    success {
-      echo "Built DADA Cloud Console images with tag ${env.RESOLVED_TAG}"
-      echo "Backend:  ${env.BACKEND_IMAGE}:${env.RESOLVED_TAG}"
-      echo "Frontend: ${env.FRONTEND_IMAGE}:${env.RESOLVED_TAG}"
-    }
-  }
 }

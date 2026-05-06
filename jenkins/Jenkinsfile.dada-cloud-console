@@ -233,16 +233,16 @@ spec:
                 }
 
                 runStage('Helm lint + render') {
-                    sh '''
+                    sh """
                         set -eux
                         helm lint helm/dada-cloud-console
                         helm template dada-cloud-console helm/dada-cloud-console \
                           --namespace devops-tools \
-                          --set backend.image.tag=${RESOLVED_TAG} \
-                          --set frontend.image.tag=${RESOLVED_TAG} \
+                          --set backend.image.tag=${resolvedTag} \
+                          --set frontend.image.tag=${resolvedTag} \
                           > /tmp/dada-cloud-console-rendered.yaml
-                        echo "Rendered $(wc -l < /tmp/dada-cloud-console-rendered.yaml) lines"
-                    '''
+                        echo "Rendered \$(wc -l < /tmp/dada-cloud-console-rendered.yaml) lines"
+                    """
                 }
             }
 
@@ -269,20 +269,21 @@ spec:
             // ── Docker ────────────────────────────────────────────────────
             container('docker') {
                 runStage('Docker build') {
-                    sh '''
+                    sh """
                         set -eux
                         docker version
-                        docker build \
-                          -t ${BACKEND_IMAGE}:${RESOLVED_TAG} \
+                        docker build \\
+                          -t ${BACKEND_IMAGE}:${resolvedTag} \\
                           -f backend/Dockerfile backend
-                        docker build \
-                          -t ${FRONTEND_IMAGE}:${RESOLVED_TAG} \
+                        docker build \\
+                          -t ${FRONTEND_IMAGE}:${resolvedTag} \\
                           -f frontend/Dockerfile frontend
-                    '''.replace('${BACKEND_IMAGE}', BACKEND_IMAGE)
-                       .replace('${FRONTEND_IMAGE}', FRONTEND_IMAGE)
+                    """
                 }
 
-                def shouldPush = !isPR() && (
+                // Push only on integration branches, not PRs
+                def isPullRequest = (env.CHANGE_ID != null && env.CHANGE_ID != '')
+                def shouldPush = !isPullRequest && (
                         env.BRANCH_NAME == 'main' ||
                         env.BRANCH_NAME == 'master' ||
                         env.BRANCH_NAME == 'develop'
