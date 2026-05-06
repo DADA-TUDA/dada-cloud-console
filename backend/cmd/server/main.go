@@ -1,0 +1,104 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"syscall"
+	"time"
+
+	"github.com/dada-tuda/console/backend/internal/api"
+	"github.com/dada-tuda/console/backend/internal/config"
+	"github.com/dada-tuda/console/backend/internal/db"
+	"github.com/dada-tuda/console/backend/internal/worker"
+	"github.com/joho/godotenv"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+func main() {
+	// Load .env if present (dev mode)
+	_ = godotenv.Load()
+
+	// Logger setup
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to load config")
+	}
+
+	pool, err := db.Connect(context.Background(), cfg.DBURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to connect to database")
+	}
+	defer pool.Close()
+
+	// Run database migrations
+	migrationsDir := resolveMigrationsDir()
+	log.Info().Str("dir", migrationsDir).Msg("running migrations")
+	if err := db.RunMigrations(context.Background(), pool, migrationsDir); err != nil {
+		log.Fatal().Err(err).Msg("failed to run migrations")
+	}
+	log.Info().Msg("migrations complete")
+
+	// Start worker goroutine
+	w := worker.New(pool, cfg)
+	go w.Start(context.Background())
+
+	// Set up HTTP router
+	router := api.SetupRouter(pool, cfg)
+
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
+	}
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		log.Info().Str("port", cfg.Port).Msg("HTTP server starting")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal().Err(err).Msg("server error")
+		}
+	}()
+
+	<-quit
+	log.Info().Msg("shutting down server")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Error().Err(err).Msg("server forced to shutdown")
+	}
+}
+
+// resolveMigrationsDir returns the path to the migrations directory.
+// It tries MIGRATIONS_DIR env var first, then walks up from the binary/source location.
+func resolveMigrationsDir() string {
+	if dir := os.Getenv("MIGRATIONS_DIR"); dir != "" {
+		return dir
+	}
+
+	// During development (go run), resolve relative to this source file.
+	_, filename, _, ok := runtime.Caller(0)
+	if ok {
+		// filename is .../backend/cmd/server/main.go
+		// migrations dir is .../backend/migrations
+		candidate := filepath.Join(filepath.Dir(filename), "..", "..", "migrations")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+
+	// Fallback: relative to CWD (works when binary is run from repo root)
+	return "migrations"
+}
