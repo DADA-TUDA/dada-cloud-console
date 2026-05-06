@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
-# init-state-repo.sh — Creates a local non-bare git repo at /tmp/dada-state-repo
-# for development use as the GitOps state repository.
-set -euo pipefail
+set -e
 
-REPO_PATH="${DADA_STATE_REPO:-/tmp/dada-state-repo}"
+REPO_PATH="${GIT_STATE_REPO_PATH:-/tmp/dada-state-repo}"
 
 if [ -d "$REPO_PATH/.git" ]; then
-  echo "State repo already exists at $REPO_PATH — skipping init."
-  exit 0
+    echo "Git state repo already exists at $REPO_PATH"
+    exit 0
 fi
 
-echo "Initialising GitOps state repo at $REPO_PATH ..."
+echo "Initializing GitOps state repo at $REPO_PATH"
 mkdir -p "$REPO_PATH"
-git -C "$REPO_PATH" init
-git -C "$REPO_PATH" config user.name "DADA Platform Bot"
-git -C "$REPO_PATH" config user.email "bot@dada-tuda.ru"
+git init "$REPO_PATH"
+cd "$REPO_PATH"
+git config user.email "bot@dada-tuda.ru"
+git config user.name "DADA Platform Bot"
 
-# Create initial directory structure and commit
-mkdir -p "$REPO_PATH/clusters/local/namespaces"
-cat > "$REPO_PATH/clusters/local/namespaces/.gitkeep" <<'EOF'
+# Create initial structure
+mkdir -p clusters/beget-prod/projects/internal/environments/dev
+mkdir -p clusters/beget-prod/projects/internal/environments/prod
+mkdir -p clusters/beget-prod/projects/client-a/environments/prod
+
+cat > clusters/beget-prod/projects/internal/project.yaml << 'EOF'
+# DADA Platform State — managed by DADA Cloud Console
+project: internal
+displayName: DADA Internal
 EOF
 
-git -C "$REPO_PATH" add .
-git -C "$REPO_PATH" commit -m "chore: initial state repo scaffold"
-
-echo "Done. State repo ready at $REPO_PATH"
+git add -A
+git commit -m "init: initial GitOps state repository structure"
+echo "Git state repo initialized at $REPO_PATH"
