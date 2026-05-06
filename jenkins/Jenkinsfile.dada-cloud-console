@@ -13,7 +13,7 @@ pipeline {
   }
 
   environment {
-    NEXUS_REGISTRY = 'nexus.example.com'
+    NEXUS_REGISTRY = 'nexus.dada-tuda.ru'
     NEXUS_NAMESPACE = 'dada'
     BACKEND_IMAGE = "${NEXUS_REGISTRY}/${NEXUS_NAMESPACE}/dada-cloud-console-backend"
     FRONTEND_IMAGE = "${NEXUS_REGISTRY}/${NEXUS_NAMESPACE}/dada-cloud-console-frontend"
@@ -63,9 +63,9 @@ pipeline {
     stage('Docker push') {
       when { expression { return params.PUSH_IMAGES } }
       steps {
-        withCredentials([usernamePassword(credentialsId: 'nexus-docker-creds', usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS')]) {
+        withCredentials([usernamePassword(credentialsId: 'docker-nexus-admin-psws', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_LOGIN')]) {
           sh '''
-            echo "$NEXUS_PASS" | docker login ${NEXUS_REGISTRY} -u "$NEXUS_USER" --password-stdin
+            echo "${DOCKER_LOGIN}" | docker login ${NEXUS_REGISTRY} -u "${DOCKER_USERNAME}" --password-stdin
             docker push ${BACKEND_IMAGE}:${RESOLVED_TAG}
             docker push ${FRONTEND_IMAGE}:${RESOLVED_TAG}
           '''
