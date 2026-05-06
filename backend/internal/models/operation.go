@@ -26,6 +26,16 @@ const (
 	OperationStatusWaitingForApproval OperationStatus = "WaitingForApproval"
 )
 
+// CreateServiceDatabasePayload is the typed payload for CreateServiceDatabase operations.
+type CreateServiceDatabasePayload struct {
+	Name            string `json:"name"`
+	Database        string `json:"database"`
+	AppRef          string `json:"app_ref"`
+	BackupEnabled   bool   `json:"backup_enabled"`
+	BackupSchedule  string `json:"backup_schedule"`
+	BackupRetention string `json:"backup_retention"`
+}
+
 // Operation represents an async, GitOps-backed platform operation.
 // Field names and db tags mirror the operations table columns exactly.
 type Operation struct {

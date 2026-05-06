@@ -1,0 +1,50 @@
+package api
+
+import (
+	"github.com/dada-tuda/console/backend/internal/auth"
+	"github.com/dada-tuda/console/backend/internal/config"
+	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// SetupRouter configures and returns the Gin engine with all API routes registered.
+func SetupRouter(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
+	if !cfg.DevMode {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	r := gin.New()
+	r.Use(gin.Recovery())
+
+	h := NewHandler(pool, cfg)
+
+	// Public routes
+	r.POST("/api/v1/auth/login", h.Login)
+
+	// Authenticated routes
+	api := r.Group("/api/v1", auth.GinMiddleware(cfg.JWTSecret))
+	{
+		// Auth
+		api.GET("/auth/me", h.Me)
+
+		// Projects
+		api.GET("/projects", h.ListProjects)
+		api.GET("/projects/:projectId", h.GetProject)
+
+		// Databases (ServiceDatabase CRD)
+		api.GET("/projects/:projectId/environments/:envId/databases", h.ListDatabases)
+		api.POST("/projects/:projectId/environments/:envId/databases", h.CreateServiceDatabase)
+
+		// Operations
+		api.GET("/projects/:projectId/operations", h.GetProjectOperations)
+		api.GET("/projects/:projectId/operations/:operationId", h.GetOperation)
+		api.POST("/projects/:projectId/operations/:operationId/retry", h.RetryOperation)
+	}
+
+	// Health check (unauthenticated)
+	r.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	return r
+}

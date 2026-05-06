@@ -1,0 +1,215 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/dada-tuda/console/backend/internal/auth"
+	"github.com/dada-tuda/console/backend/internal/models"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+// ListDatabases returns all ServiceDatabase resources in a project environment.
+func (h *Handler) ListDatabases(c *gin.Context) {
+	claims, ok := auth.GetClaims(c)
+	if !ok {
+		respondUnauthorized(c)
+		return
+	}
+
+	projectID, err := uuid.Parse(c.Param("projectId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+	envID, err := uuid.Parse(c.Param("envId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+
+	// Verify membership
+	_, err = h.getUserProjectRole(c.Request.Context(), claims.UserID, projectID)
+	if err == pgx.ErrNoRows {
+		respondNotFound(c)
+		return
+	}
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to check project membership")
+		return
+	}
+
+	rows, err := h.pool.Query(c.Request.Context(),
+		`SELECT id, project_id, environment_id, kind, name, phase, summary_json, last_synced_at
+		 FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'ServiceDatabase'
+		 ORDER BY name`,
+		projectID, envID,
+	)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to query databases")
+		return
+	}
+	defer rows.Close()
+
+	var databases []models.ResourceSnapshot
+	for rows.Next() {
+		var rs models.ResourceSnapshot
+		if err := rows.Scan(
+			&rs.ID, &rs.ProjectID, &rs.EnvironmentID, &rs.Kind, &rs.Name,
+			&rs.Phase, &rs.SummaryJSON, &rs.LastSyncedAt,
+		); err != nil {
+			respondError(c, http.StatusInternalServerError, "failed to scan database")
+			return
+		}
+		databases = append(databases, rs)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(c, http.StatusInternalServerError, "error reading databases")
+		return
+	}
+	if databases == nil {
+		databases = []models.ResourceSnapshot{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"databases": databases})
+}
+
+type createServiceDatabaseRequest struct {
+	Name            string `json:"name"`
+	Database        string `json:"database"`
+	AppRef          string `json:"app_ref"`
+	BackupEnabled   bool   `json:"backup_enabled"`
+	BackupSchedule  string `json:"backup_schedule"`
+	BackupRetention string `json:"backup_retention"`
+}
+
+// CreateServiceDatabase enqueues an operation to provision a new ServiceDatabase CRD.
+func (h *Handler) CreateServiceDatabase(c *gin.Context) {
+	claims, ok := auth.GetClaims(c)
+	if !ok {
+		respondUnauthorized(c)
+		return
+	}
+
+	projectID, err := uuid.Parse(c.Param("projectId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+	envID, err := uuid.Parse(c.Param("envId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+
+	// Check write permission
+	role, err := h.getUserProjectRole(c.Request.Context(), claims.UserID, projectID)
+	if err == pgx.ErrNoRows {
+		respondNotFound(c)
+		return
+	}
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to check project membership")
+		return
+	}
+	if !canWrite(role) {
+		respondForbidden(c)
+		return
+	}
+
+	var req createServiceDatabaseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Validate fields
+	if req.Name == "" {
+		respondError(c, http.StatusBadRequest, "name is required")
+		return
+	}
+	if req.Database == "" {
+		respondError(c, http.StatusBadRequest, "database is required")
+		return
+	}
+	if req.AppRef == "" {
+		respondError(c, http.StatusBadRequest, "app_ref is required")
+		return
+	}
+	if err := validateKubeName(req.Name); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validatePgName(req.Database); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Check name uniqueness in resource_snapshots for this project/env
+	var existing int
+	err = h.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'ServiceDatabase' AND name = $3`,
+		projectID, envID, req.Name,
+	).Scan(&existing)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to check name uniqueness")
+		return
+	}
+	if existing > 0 {
+		respondError(c, http.StatusConflict, "a database with that name already exists in this environment")
+		return
+	}
+
+	// Marshal payload
+	payload := models.CreateServiceDatabasePayload{
+		Name:            req.Name,
+		Database:        req.Database,
+		AppRef:          req.AppRef,
+		BackupEnabled:   req.BackupEnabled,
+		BackupSchedule:  req.BackupSchedule,
+		BackupRetention: req.BackupRetention,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to marshal payload")
+		return
+	}
+
+	// Insert Operation
+	var op models.Operation
+	err = h.pool.QueryRow(c.Request.Context(),
+		`INSERT INTO operations (actor_id, project_id, environment_id, action, resource_kind, resource_name, status, payload)
+		 VALUES ($1, $2, $3, 'CreateServiceDatabase', 'ServiceDatabase', $4, 'Created', $5)
+		 RETURNING id, actor_id, project_id, environment_id, action, resource_kind, resource_name,
+		           status, payload, validation_result, git_commit, git_path, argo_application,
+		           error_code, error_message, created_at, updated_at`,
+		claims.UserID, projectID, envID, req.Name, payloadBytes,
+	).Scan(
+		&op.ID, &op.ActorID, &op.ProjectID, &op.EnvironmentID,
+		&op.Action, &op.ResourceKind, &op.ResourceName,
+		&op.Status, &op.Payload, &op.ValidationResult,
+		&op.GitCommit, &op.GitPath, &op.ArgoApplication,
+		&op.ErrorCode, &op.ErrorMessage, &op.CreatedAt, &op.UpdatedAt,
+	)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to create operation")
+		return
+	}
+
+	// Insert AuditEvent (best-effort — don't fail the request if this fails)
+	auditMeta, _ := json.Marshal(payload)
+	_, _ = h.pool.Exec(c.Request.Context(),
+		`INSERT INTO audit_events (actor_id, project_id, operation_id, action, resource_kind, resource_name, metadata)
+		 VALUES ($1, $2, $3, 'CreateServiceDatabase', 'ServiceDatabase', $4, $5)`,
+		claims.UserID, projectID, op.ID, req.Name, auditMeta,
+	)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"operation": op,
+		"message":   "ServiceDatabase creation queued",
+	})
+}
