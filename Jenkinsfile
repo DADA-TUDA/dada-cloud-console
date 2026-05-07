@@ -228,7 +228,7 @@ spec:
 
                 runStage('Backend build') {
                     dir('backend') {
-                        sh 'go build -ldflags="-s -w" -o bin/server ./cmd/server'
+                        sh 'go build -buildvcs=false -ldflags="-s -w" -o bin/server ./cmd/server'
                     }
                 }
 
