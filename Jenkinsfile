@@ -120,13 +120,15 @@ spec:
           value: /tmp/.cache/npm
         - name: NEXT_TELEMETRY_DISABLED
           value: "1"
+        - name: NODE_OPTIONS
+          value: "--max-old-space-size=1536"
       resources:
         requests:
           cpu: "100m"
           memory: "256Mi"
         limits:
           cpu: "1500m"
-          memory: "1536Mi"
+          memory: "2Gi"
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
