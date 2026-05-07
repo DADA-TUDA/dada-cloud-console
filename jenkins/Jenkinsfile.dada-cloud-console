@@ -93,11 +93,11 @@ spec:
           value: "0"
       resources:
         requests:
-          cpu: "250m"
-          memory: "512Mi"
+          cpu: "100m"
+          memory: "256Mi"
         limits:
-          cpu: "2000m"
-          memory: "2Gi"
+          cpu: "1500m"
+          memory: "1536Mi"
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
@@ -122,11 +122,11 @@ spec:
           value: "1"
       resources:
         requests:
-          cpu: "250m"
-          memory: "512Mi"
+          cpu: "100m"
+          memory: "256Mi"
         limits:
-          cpu: "2000m"
-          memory: "2Gi"
+          cpu: "1500m"
+          memory: "1536Mi"
       volumeMounts:
         - name: workspace-volume
           mountPath: /home/jenkins/agent
@@ -170,11 +170,11 @@ spec:
         - --host=unix:///var/run/docker.sock
       resources:
         requests:
-          cpu: "500m"
-          memory: "1Gi"
+          cpu: "250m"
+          memory: "512Mi"
         limits:
-          cpu: "2000m"
-          memory: "3Gi"
+          cpu: "1500m"
+          memory: "1536Mi"
       volumeMounts:
         - name: docker-graph-storage
           mountPath: /var/lib/docker
