@@ -1,9 +1,8 @@
 node_modules
-.next
 .git
 *.md
-.env*
 .gitignore
+.env*
 .eslintrc*
 .prettier*
 jest.config*
