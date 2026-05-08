@@ -1,0 +1,15 @@
+apiVersion: platform.dada-tuda.ru/v1alpha1
+kind: App
+metadata:
+  name: codex-lb
+  namespace: internal-prod
+  labels:
+    dada.io/project: internal
+    dada.io/environment: prod
+    dada.io/operation: op-test-1234
+spec:
+  project: internal
+  image: ghcr.io/dada-tuda/codex-lb:1.14.2
+  port: 8080
+  replicas: 2
+  profile: small

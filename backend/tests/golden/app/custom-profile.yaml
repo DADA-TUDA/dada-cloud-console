@@ -1,0 +1,15 @@
+apiVersion: platform.dada-tuda.ru/v1alpha1
+kind: App
+metadata:
+  name: profi-backend
+  namespace: client-a-prod
+  labels:
+    dada.io/project: client-a
+    dada.io/environment: prod
+    dada.io/operation: op-test-5678
+spec:
+  project: client-a
+  image: registry.dada-tuda.ru/profi-backend:2.3.1
+  port: 3000
+  replicas: 3
+  profile: medium
