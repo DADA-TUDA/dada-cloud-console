@@ -11,8 +11,9 @@ import type {
   CreateDatabaseResponse,
 } from "./types";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+// Empty string → relative URLs → requests go through the ingress proxy.
+// Override with NEXT_PUBLIC_API_URL at build time only if needed (e.g. local dev).
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
