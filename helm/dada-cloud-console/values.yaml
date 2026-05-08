@@ -10,25 +10,29 @@ backend:
   replicaCount: 1
   image:
     repository: dada-cloud-console-backend
-    tag: "c4ca3227"
+    tag: "latest"
     pullPolicy: IfNotPresent
   service:
     port: 8080
   env:
     APP_ENV: production
     HTTP_PORT: "8080"
-    GIT_STATE_REPO_URL: "https://github.com/DADA-TUDA/dada-cloud-console.git"
+    GIT_STATE_REPO_URL: ""
     GIT_STATE_REPO_BRANCH: "gitops-state"
     GIT_STATE_REPO_LOCAL_PATH: "/var/lib/dada-state"
     GIT_AUTHOR_NAME: "DADA Platform Bot"
     GIT_AUTHOR_EMAIL: "platform-bot@dada-tuda.ru"
-    ARGO_CLUSTER_NAME: "beget-prod"
-  # Secret already provisioned manually in the cluster — do not regenerate
-  existingSecret: "dada-cloud-console-backend"
+    ARGO_CLUSTER_NAME: ""
+  existingSecret: ""
+  secret:
+    DATABASE_URL: "postgres://dada:change-me@postgresql:5432/dada_console?sslmode=disable"
+    JWT_SECRET: "change-me"
+    GIT_USERNAME: "platform-bot"
+    GIT_TOKEN: "change-me"
   persistence:
     enabled: true
     size: 5Gi
-    storageClassName: "longhorn-prod"
+    storageClassName: ""
   resources:
     requests:
       cpu: 100m
@@ -42,13 +46,13 @@ frontend:
   replicaCount: 1
   image:
     repository: dada-cloud-console-frontend
-    tag: "c4ca3227"
+    tag: "latest"
     pullPolicy: IfNotPresent
   service:
     port: 3000
   env:
     NODE_ENV: production
-    NEXT_PUBLIC_API_BASE_URL: "https://console.dada-tuda.ru/api"
+    NEXT_PUBLIC_API_BASE_URL: "/api"
   resources:
     requests:
       cpu: 100m
@@ -62,7 +66,7 @@ ingress:
   className: nginx
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-  host: console.dada-tuda.ru
+  host: console.example.com
   tls:
     enabled: true
     secretName: dada-cloud-console-tls
@@ -75,5 +79,5 @@ migrationJob:
   enabled: false
   image:
     repository: dada-cloud-console-backend
-    tag: "c4ca3227"
+    tag: "latest"
   command: ["./migrate"]
