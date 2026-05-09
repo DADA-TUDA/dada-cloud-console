@@ -133,6 +133,21 @@ export default function ProjectOverviewPage() {
         </Link>
 
         <Link
+          href={`/projects/${projectId}/apps`}
+          className="group flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:border-blue-200 hover:shadow-md transition-all"
+        >
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-green-100 text-green-600 group-hover:bg-green-600 group-hover:text-white transition-colors">
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Applications</p>
+            <p className="text-xs text-gray-400">Manage app workloads</p>
+          </div>
+        </Link>
+
+        <Link
           href={`/projects/${projectId}/operations`}
           className="group flex items-center gap-4 rounded-xl border border-gray-200 bg-white p-5 shadow-sm hover:border-blue-200 hover:shadow-md transition-all"
         >

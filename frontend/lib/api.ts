@@ -9,6 +9,9 @@ import type {
   Operation,
   DatabasesResponse,
   CreateDatabaseResponse,
+  AppsResponse,
+  CreateAppResponse,
+  DeployImageResponse,
 } from "./types";
 
 // Empty string → relative URLs → requests go through the ingress proxy.
@@ -96,4 +99,27 @@ export const databasesApi = {
     apiFetch<CreateDatabaseResponse>(`/api/v1/projects/${projectId}/environments/${envId}/databases`, {
       method: "POST", body: data,
     }),
+};
+
+export const appsApi = {
+  list: (projectId: string, envId: string) =>
+    apiFetch<AppsResponse>(`/api/v1/projects/${projectId}/environments/${envId}/apps`),
+
+  create: (projectId: string, envId: string, data: {
+    name: string;
+    image: string;
+    port: number;
+    replicas: number;
+    profile: string;
+  }) =>
+    apiFetch<CreateAppResponse>(`/api/v1/projects/${projectId}/environments/${envId}/apps`, {
+      method: "POST",
+      body: data,
+    }),
+
+  updateImage: (projectId: string, envId: string, appName: string, image: string) =>
+    apiFetch<DeployImageResponse>(
+      `/api/v1/projects/${projectId}/environments/${envId}/apps/${appName}/image`,
+      { method: "PATCH", body: { image } }
+    ),
 };

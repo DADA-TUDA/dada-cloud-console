@@ -90,3 +90,26 @@ export interface CreateDatabaseResponse {
 export interface OperationsResponse {
   operations: Operation[];
 }
+
+export interface AppSummary {
+  image: string;
+  port: number;
+  replicas: number;
+  profile: string;
+  status: string;
+  message: string;
+}
+
+export interface AppsResponse {
+  apps: ResourceSnapshot[];
+}
+
+export interface CreateAppResponse {
+  operation: Operation;
+  message: string;
+}
+
+export interface DeployImageResponse {
+  operation: Operation;
+  message: string;
+}
