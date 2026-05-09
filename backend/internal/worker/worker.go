@@ -149,6 +149,10 @@ func (w *Worker) processOperation(ctx context.Context, op *models.Operation) err
 	switch op.Action {
 	case "CreateServiceDatabase":
 		return w.processCreateServiceDatabase(ctx, op)
+	case "CreateApp":
+		return w.processCreateApp(ctx, op)
+	case "DeployImageVersion":
+		return w.processDeployImageVersion(ctx, op)
 	default:
 		return fmt.Errorf("unknown action: %s", op.Action)
 	}
@@ -261,6 +265,233 @@ func (w *Worker) simulateArgoAndReconcile(ctx context.Context, opID, projectID u
 	} else {
 		log.Info().Str("resource", resourceName).Msg("resource snapshot created: Ready")
 	}
+}
+
+func (w *Worker) processCreateApp(ctx context.Context, op *models.Operation) error {
+	var payload models.CreateAppPayload
+	if err := json.Unmarshal(op.Payload, &payload); err != nil {
+		return fmt.Errorf("parsing CreateApp payload: %w", err)
+	}
+
+	var projectName, envName, envNamespace string
+	err := w.pool.QueryRow(ctx,
+		`SELECT p.name, e.name, e.namespace
+		 FROM projects p JOIN environments e ON e.project_id = p.id
+		 WHERE p.id = $1 AND e.id = $2`,
+		op.ProjectID, op.EnvironmentID,
+	).Scan(&projectName, &envName, &envNamespace)
+	if err != nil {
+		return fmt.Errorf("fetching project/env for CreateApp: %w", err)
+	}
+
+	w.updateStatus(ctx, op.ID, models.OperationStatusRendering)
+	spec := gitwriter.AppSpec{
+		Name:        payload.Name,
+		Namespace:   envNamespace,
+		ProjectSlug: projectName,
+		EnvSlug:     envName,
+		Image:       payload.Image,
+		Port:        payload.Port,
+		Replicas:    payload.Replicas,
+		Profile:     payload.Profile,
+		OperationID: op.ID.String(),
+	}
+	yaml, err := gitwriter.RenderApp(spec)
+	if err != nil {
+		return fmt.Errorf("rendering App manifest: %w", err)
+	}
+
+	w.updateStatus(ctx, op.ID, models.OperationStatusCommittingToGit)
+	gitPath := gitwriter.AppGitPath(projectName, envName, payload.Name)
+	commitMsg := fmt.Sprintf(
+		"[DADA Console] Create App %s for project %s\n\nOperation: %s\nActor: %s\nProject: %s\nEnvironment: %s\nResource: App/%s/%s\n",
+		payload.Name, projectName,
+		op.ID, op.ActorID, projectName, envName,
+		envName, payload.Name,
+	)
+	sha, err := w.gitWriter.CommitManifest(gitPath, yaml, commitMsg)
+	if err != nil {
+		return fmt.Errorf("git commit for CreateApp: %w", err)
+	}
+
+	_, err = w.pool.Exec(ctx,
+		`UPDATE operations SET status = 'Committed', git_commit = $1, git_path = $2, updated_at = NOW() WHERE id = $3`,
+		sha, gitPath, op.ID)
+	if err != nil {
+		return fmt.Errorf("updating committed status for CreateApp: %w", err)
+	}
+	log.Info().Str("op_id", op.ID.String()).Str("sha", sha[:8]).Str("path", gitPath).Msg("committed App to git")
+
+	// Store spec in resource_snapshots so DeployImageVersion can re-render without reading git
+	summaryJSON, _ := json.Marshal(map[string]interface{}{
+		"image":    payload.Image,
+		"port":     payload.Port,
+		"replicas": payload.Replicas,
+		"profile":  payload.Profile,
+		"status":   "Pending",
+		"message":  "App created by DADA Console",
+	})
+	var envIDVal interface{} = nil
+	if op.EnvironmentID != nil {
+		envIDVal = *op.EnvironmentID
+	}
+	_, err = w.pool.Exec(ctx, `
+		INSERT INTO resource_snapshots (project_id, environment_id, kind, name, phase, summary_json)
+		VALUES ($1, $2, 'App', $3, 'Pending', $4)
+		ON CONFLICT (project_id, environment_id, kind, name)
+		DO UPDATE SET phase = 'Pending', summary_json = EXCLUDED.summary_json, last_synced_at = NOW()
+	`, op.ProjectID, envIDVal, payload.Name, summaryJSON)
+	if err != nil {
+		log.Error().Err(err).Msg("creating App resource snapshot")
+	}
+
+	if w.cfg.DevMode {
+		w.simulateAppArgoAndReconcile(ctx, op.ID, op.ProjectID, op.EnvironmentID, payload.Name, summaryJSON)
+	} else {
+		w.updateStatus(ctx, op.ID, models.OperationStatusWaitingForArgoSync)
+	}
+	return nil
+}
+
+func (w *Worker) simulateAppArgoAndReconcile(ctx context.Context, opID, projectID uuid.UUID, environmentID *uuid.UUID, appName string, specJSON []byte) {
+	steps := []struct {
+		status models.OperationStatus
+		delay  time.Duration
+	}{
+		{models.OperationStatusWaitingForArgoSync, 2 * time.Second},
+		{models.OperationStatusSyncing, 3 * time.Second},
+		{models.OperationStatusReconciling, 4 * time.Second},
+		{models.OperationStatusReady, 0},
+	}
+	for _, step := range steps {
+		time.Sleep(step.delay)
+		w.updateStatus(ctx, opID, step.status)
+		log.Info().Str("op_id", opID.String()).Str("status", string(step.status)).Msg("app operation status advanced")
+	}
+
+	var spec map[string]interface{}
+	_ = json.Unmarshal(specJSON, &spec)
+	spec["status"] = "Ready"
+	spec["message"] = "App provisioned by DADA Console"
+	readyJSON, _ := json.Marshal(spec)
+
+	var envIDVal interface{} = nil
+	if environmentID != nil {
+		envIDVal = *environmentID
+	}
+	_, err := w.pool.Exec(ctx, `
+		UPDATE resource_snapshots SET phase = 'Ready', summary_json = $1, last_synced_at = NOW()
+		WHERE project_id = $2 AND environment_id = $3 AND kind = 'App' AND name = $4
+	`, readyJSON, projectID, envIDVal, appName)
+	if err != nil {
+		log.Error().Err(err).Msg("updating App resource snapshot to Ready")
+	}
+}
+
+func (w *Worker) processDeployImageVersion(ctx context.Context, op *models.Operation) error {
+	var payload models.DeployImageVersionPayload
+	if err := json.Unmarshal(op.Payload, &payload); err != nil {
+		return fmt.Errorf("parsing DeployImageVersion payload: %w", err)
+	}
+
+	var projectName, envName, envNamespace string
+	err := w.pool.QueryRow(ctx,
+		`SELECT p.name, e.name, e.namespace
+		 FROM projects p JOIN environments e ON e.project_id = p.id
+		 WHERE p.id = $1 AND e.id = $2`,
+		op.ProjectID, op.EnvironmentID,
+	).Scan(&projectName, &envName, &envNamespace)
+	if err != nil {
+		return fmt.Errorf("fetching project/env for DeployImageVersion: %w", err)
+	}
+
+	// Read current app spec from resource_snapshots
+	var summaryRaw []byte
+	var envIDVal interface{} = nil
+	if op.EnvironmentID != nil {
+		envIDVal = *op.EnvironmentID
+	}
+	err = w.pool.QueryRow(ctx,
+		`SELECT summary_json FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'App' AND name = $3`,
+		op.ProjectID, envIDVal, payload.AppName,
+	).Scan(&summaryRaw)
+	if err != nil {
+		return fmt.Errorf("loading app spec from snapshot: %w", err)
+	}
+
+	var currentSpec map[string]interface{}
+	if err := json.Unmarshal(summaryRaw, &currentSpec); err != nil {
+		return fmt.Errorf("parsing app spec from snapshot: %w", err)
+	}
+
+	portVal, _ := currentSpec["port"].(float64)
+	replicasVal, _ := currentSpec["replicas"].(float64)
+	profileVal, _ := currentSpec["profile"].(string)
+	if portVal == 0 {
+		portVal = 8080
+	}
+	if replicasVal == 0 {
+		replicasVal = 2
+	}
+	if profileVal == "" {
+		profileVal = "small"
+	}
+
+	w.updateStatus(ctx, op.ID, models.OperationStatusRendering)
+	spec := gitwriter.AppSpec{
+		Name:        payload.AppName,
+		Namespace:   envNamespace,
+		ProjectSlug: projectName,
+		EnvSlug:     envName,
+		Image:       payload.Image,
+		Port:        int(portVal),
+		Replicas:    int(replicasVal),
+		Profile:     profileVal,
+		OperationID: op.ID.String(),
+	}
+	yaml, err := gitwriter.RenderApp(spec)
+	if err != nil {
+		return fmt.Errorf("rendering App manifest for deploy: %w", err)
+	}
+
+	w.updateStatus(ctx, op.ID, models.OperationStatusCommittingToGit)
+	gitPath := gitwriter.AppGitPath(projectName, envName, payload.AppName)
+	commitMsg := fmt.Sprintf(
+		"[DADA Console] Deploy image %s for app %s in project %s\n\nOperation: %s\nActor: %s\nProject: %s\nEnvironment: %s\nResource: App/%s/%s\n",
+		payload.Image, payload.AppName, projectName,
+		op.ID, op.ActorID, projectName, envName,
+		envName, payload.AppName,
+	)
+	sha, err := w.gitWriter.CommitManifest(gitPath, yaml, commitMsg)
+	if err != nil {
+		return fmt.Errorf("git commit for DeployImageVersion: %w", err)
+	}
+
+	_, err = w.pool.Exec(ctx,
+		`UPDATE operations SET status = 'Committed', git_commit = $1, git_path = $2, updated_at = NOW() WHERE id = $3`,
+		sha, gitPath, op.ID)
+	if err != nil {
+		return fmt.Errorf("updating committed status for DeployImageVersion: %w", err)
+	}
+	log.Info().Str("op_id", op.ID.String()).Str("sha", sha[:8]).Str("path", gitPath).Msg("committed deploy to git")
+
+	// Update snapshot with new image, phase=Pending
+	currentSpec["image"] = payload.Image
+	currentSpec["status"] = "Pending"
+	currentSpec["message"] = "Image update in progress"
+	updatedJSON, _ := json.Marshal(currentSpec)
+	_, _ = w.pool.Exec(ctx, `
+		UPDATE resource_snapshots SET phase = 'Pending', summary_json = $1, last_synced_at = NOW()
+		WHERE project_id = $2 AND environment_id = $3 AND kind = 'App' AND name = $4
+	`, updatedJSON, op.ProjectID, envIDVal, payload.AppName)
+
+	if w.cfg.DevMode {
+		w.simulateAppArgoAndReconcile(ctx, op.ID, op.ProjectID, op.EnvironmentID, payload.AppName, updatedJSON)
+	} else {
+		w.updateStatus(ctx, op.ID, models.OperationStatusWaitingForArgoSync)
+	}
+	return nil
 }
 
 func (w *Worker) updateStatus(ctx context.Context, opID uuid.UUID, status models.OperationStatus) {
