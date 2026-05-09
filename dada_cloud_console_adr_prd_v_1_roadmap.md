@@ -10,7 +10,7 @@
 
 ### Status
 
-Proposed for implementation.
+Accepted. v1 deployed to beget-prod cluster (2026-05-08).
 
 ### Context
 
@@ -145,7 +145,7 @@ For v1, DADA Cloud Console will not be:
 
 ### Status
 
-Proposed.
+Accepted. Validated in production — bot commits confirmed in state repo.
 
 ### Context
 
@@ -223,7 +223,7 @@ User request → Operation status: WaitingForApproval → Admin approves in Cons
 
 ### Status
 
-Proposed.
+Accepted. Operation state machine shipped and working in v1.
 
 ### Context
 
@@ -295,7 +295,7 @@ The UI tracks the operation and shows progress.
 
 ### Status
 
-Proposed.
+Accepted. CreateServiceDatabase is the first typed action, confirmed safe and correct.
 
 ### Context
 
@@ -346,7 +346,7 @@ Raw YAML can exist only in admin/debug mode and only for trusted platform admini
 
 ### Status
 
-Proposed.
+Accepted. Three role views (client / developer / admin) shipped in v1 frontend.
 
 ### Context
 
