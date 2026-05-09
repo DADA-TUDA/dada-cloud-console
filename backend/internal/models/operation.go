@@ -36,6 +36,21 @@ type CreateServiceDatabasePayload struct {
 	BackupRetention string `json:"backup_retention"`
 }
 
+// CreateAppPayload is the typed payload for CreateApp operations.
+type CreateAppPayload struct {
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	Port     int    `json:"port"`
+	Replicas int    `json:"replicas"`
+	Profile  string `json:"profile"`
+}
+
+// DeployImageVersionPayload is the typed payload for DeployImageVersion operations.
+type DeployImageVersionPayload struct {
+	AppName string `json:"app_name"`
+	Image   string `json:"image"`
+}
+
 // Operation represents an async, GitOps-backed platform operation.
 // Field names and db tags mirror the operations table columns exactly.
 type Operation struct {
