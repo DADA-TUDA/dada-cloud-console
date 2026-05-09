@@ -144,7 +144,7 @@ func (w *Worker) claimNextOperation(ctx context.Context) (*models.Operation, err
 	return &op, nil
 }
 
-// processOperation drives a CreateServiceDatabase operation through the full pipeline.
+// processOperation routes an operation to the appropriate handler based on its action.
 func (w *Worker) processOperation(ctx context.Context, op *models.Operation) error {
 	switch op.Action {
 	case "CreateServiceDatabase":
@@ -342,7 +342,8 @@ func (w *Worker) processCreateApp(ctx context.Context, op *models.Operation) err
 		DO UPDATE SET phase = 'Pending', summary_json = EXCLUDED.summary_json, last_synced_at = NOW()
 	`, op.ProjectID, envIDVal, payload.Name, summaryJSON)
 	if err != nil {
-		log.Error().Err(err).Msg("creating App resource snapshot")
+		// Return error: DeployImageVersion depends on this snapshot existing to re-render.
+		return fmt.Errorf("upserting App resource snapshot: %w", err)
 	}
 
 	if w.cfg.DevMode {
@@ -481,10 +482,12 @@ func (w *Worker) processDeployImageVersion(ctx context.Context, op *models.Opera
 	currentSpec["status"] = "Pending"
 	currentSpec["message"] = "Image update in progress"
 	updatedJSON, _ := json.Marshal(currentSpec)
-	_, _ = w.pool.Exec(ctx, `
+	if _, err = w.pool.Exec(ctx, `
 		UPDATE resource_snapshots SET phase = 'Pending', summary_json = $1, last_synced_at = NOW()
 		WHERE project_id = $2 AND environment_id = $3 AND kind = 'App' AND name = $4
-	`, updatedJSON, op.ProjectID, envIDVal, payload.AppName)
+	`, updatedJSON, op.ProjectID, envIDVal, payload.AppName); err != nil {
+		log.Error().Err(err).Str("app", payload.AppName).Msg("updating App snapshot for DeployImageVersion")
+	}
 
 	if w.cfg.DevMode {
 		w.simulateAppArgoAndReconcile(ctx, op.ID, op.ProjectID, op.EnvironmentID, payload.AppName, updatedJSON)
