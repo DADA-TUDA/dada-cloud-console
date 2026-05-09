@@ -297,9 +297,9 @@ export default function AppsPage() {
                 type="number"
                 required
                 min={1}
-                max={20}
+                max={10}
                 value={form.replicas}
-                onChange={(e) => handleFormChange("replicas", parseInt(e.target.value, 10))}
+                onChange={(e) => handleFormChange("replicas", parseInt(e.target.value, 10) || 1)}
                 className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
