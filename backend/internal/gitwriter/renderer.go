@@ -30,13 +30,12 @@ metadata:
     dada.io/environment: {{ .EnvSlug }}
     dada.io/operation: {{ .OperationID }}
 spec:
-  appRef:
-    name: {{ .AppRef }}
-  engine: postgres
+  appRef: {{ .AppRef }}
+  engine: postgresql
   database: {{ .Database }}
   backup:
     enabled: {{ .BackupEnabled }}
-    schedule: {{ .BackupSchedule }}
+    frequency: {{ .BackupSchedule }}
     retention: {{ .BackupRetention }}
 `))
 
