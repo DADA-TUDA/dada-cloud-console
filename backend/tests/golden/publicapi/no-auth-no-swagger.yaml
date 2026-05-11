@@ -1,0 +1,29 @@
+apiVersion: platform.dada-tuda.ru/v1alpha1
+kind: PublicApi
+metadata:
+  name: app-internal-ru
+  namespace: internal-prod
+  labels:
+    dada.io/project: internal
+    dada.io/environment: prod
+    dada.io/operation: op-test-5678
+spec:
+  upstream:
+    serviceName: codex-lb
+    servicePort: 8080
+  route:
+    prefix: /
+    pathPattern: /**
+    stripPrefix: false
+  auth:
+    enabled: false
+    scheme: none
+  swagger:
+    enabled: false
+    path: /v3/api-docs
+    title: codex-lb
+  dns:
+    enabled: true
+    fqdn: app.internal.ru
+    recordType: A
+    target: 93.189.231.60

@@ -1,0 +1,32 @@
+apiVersion: platform.dada-tuda.ru/v1alpha1
+kind: PublicApi
+metadata:
+  name: api-myservice-ru
+  namespace: client-a-prod
+  labels:
+    dada.io/project: client-a
+    dada.io/environment: prod
+    dada.io/operation: op-test-1234
+spec:
+  upstream:
+    serviceName: profi-backend
+    servicePort: 3000
+  route:
+    prefix: /
+    pathPattern: /**
+    stripPrefix: false
+  auth:
+    enabled: true
+    scheme: platform-jwt
+    scopes:
+      - api.read
+      - api.write
+  swagger:
+    enabled: true
+    path: /v3/api-docs
+    title: My Service API
+  dns:
+    enabled: true
+    fqdn: api.myservice.ru
+    recordType: A
+    target: 93.189.231.60
