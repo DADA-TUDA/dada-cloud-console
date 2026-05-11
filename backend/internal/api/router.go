@@ -54,6 +54,10 @@ func SetupRouter(pool *pgxpool.Pool, cfg *config.Config) *gin.Engine {
 		api.POST("/projects/:projectId/environments/:envId/apps", h.CreateApp)
 		api.PATCH("/projects/:projectId/environments/:envId/apps/:appName/image", h.UpdateAppImage)
 
+		// Endpoints (PublicApi CRD)
+		api.GET("/projects/:projectId/environments/:envId/apps/:appName/endpoints", h.ListEndpoints)
+		api.POST("/projects/:projectId/environments/:envId/apps/:appName/endpoints", h.CreateEndpoint)
+
 		// Operations
 		api.GET("/projects/:projectId/operations", h.GetProjectOperations)
 		api.GET("/projects/:projectId/operations/:operationId", h.GetOperation)

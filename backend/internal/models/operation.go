@@ -51,6 +51,19 @@ type DeployImageVersionPayload struct {
 	Image   string `json:"image"`
 }
 
+// CreatePublicApiPayload is the typed payload for CreatePublicApi operations.
+type CreatePublicApiPayload struct {
+	AppName        string   `json:"app_name"`
+	PublicApiName  string   `json:"public_api_name"`
+	FQDN           string   `json:"fqdn"`
+	AuthEnabled    bool     `json:"auth_enabled"`
+	AuthScheme     string   `json:"auth_scheme"`
+	AuthScopes     []string `json:"auth_scopes,omitempty"`
+	SwaggerEnabled bool     `json:"swagger_enabled"`
+	SwaggerPath    string   `json:"swagger_path"`
+	SwaggerTitle   string   `json:"swagger_title"`
+}
+
 // Operation represents an async, GitOps-backed platform operation.
 // Field names and db tags mirror the operations table columns exactly.
 type Operation struct {

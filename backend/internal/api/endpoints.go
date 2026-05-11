@@ -1,0 +1,231 @@
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/dada-tuda/console/backend/internal/auth"
+	"github.com/dada-tuda/console/backend/internal/models"
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+// ListEndpoints returns all PublicApi resources for an app in a project environment.
+func (h *Handler) ListEndpoints(c *gin.Context) {
+	claims, ok := auth.GetClaims(c)
+	if !ok {
+		respondUnauthorized(c)
+		return
+	}
+
+	projectID, err := uuid.Parse(c.Param("projectId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+	envID, err := uuid.Parse(c.Param("envId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+	appName := c.Param("appName")
+
+	_, err = h.getUserProjectRole(c.Request.Context(), claims.UserID, projectID)
+	if err == pgx.ErrNoRows {
+		respondNotFound(c)
+		return
+	}
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to check project membership")
+		return
+	}
+
+	rows, err := h.pool.Query(c.Request.Context(),
+		`SELECT id, project_id, environment_id, kind, name, phase, summary_json, last_synced_at
+		 FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'PublicApi'
+		   AND summary_json->>'app_name' = $3
+		 ORDER BY name`,
+		projectID, envID, appName,
+	)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to query endpoints")
+		return
+	}
+	defer rows.Close()
+
+	var endpoints []models.ResourceSnapshot
+	for rows.Next() {
+		var rs models.ResourceSnapshot
+		if err := rows.Scan(
+			&rs.ID, &rs.ProjectID, &rs.EnvironmentID, &rs.Kind, &rs.Name,
+			&rs.Phase, &rs.SummaryJSON, &rs.LastSyncedAt,
+		); err != nil {
+			respondError(c, http.StatusInternalServerError, "failed to scan endpoint")
+			return
+		}
+		endpoints = append(endpoints, rs)
+	}
+	if endpoints == nil {
+		endpoints = []models.ResourceSnapshot{}
+	}
+	c.JSON(http.StatusOK, gin.H{"endpoints": endpoints})
+}
+
+type createEndpointRequest struct {
+	FQDN           string   `json:"fqdn"`
+	AuthEnabled    bool     `json:"auth_enabled"`
+	AuthScheme     string   `json:"auth_scheme"`
+	AuthScopes     []string `json:"auth_scopes"`
+	SwaggerEnabled bool     `json:"swagger_enabled"`
+	SwaggerPath    string   `json:"swagger_path"`
+	SwaggerTitle   string   `json:"swagger_title"`
+}
+
+// CreateEndpoint enqueues a CreatePublicApi operation.
+func (h *Handler) CreateEndpoint(c *gin.Context) {
+	claims, ok := auth.GetClaims(c)
+	if !ok {
+		respondUnauthorized(c)
+		return
+	}
+
+	projectID, err := uuid.Parse(c.Param("projectId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+	envID, err := uuid.Parse(c.Param("envId"))
+	if err != nil {
+		respondNotFound(c)
+		return
+	}
+	appName := c.Param("appName")
+
+	role, err := h.getUserProjectRole(c.Request.Context(), claims.UserID, projectID)
+	if err == pgx.ErrNoRows {
+		respondNotFound(c)
+		return
+	}
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to check project membership")
+		return
+	}
+	if !canWrite(role) {
+		respondForbidden(c)
+		return
+	}
+
+	var req createEndpointRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		respondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.FQDN == "" {
+		respondError(c, http.StatusBadRequest, "fqdn is required")
+		return
+	}
+	if !strings.Contains(req.FQDN, ".") {
+		respondError(c, http.StatusBadRequest, "fqdn must be a valid domain name")
+		return
+	}
+
+	if req.AuthScheme == "" {
+		req.AuthScheme = "none"
+		req.AuthEnabled = false
+	}
+	if req.SwaggerPath == "" {
+		req.SwaggerPath = "/v3/api-docs"
+	}
+	if req.SwaggerTitle == "" {
+		req.SwaggerTitle = appName
+	}
+
+	validSchemes := map[string]bool{"none": true, "platform-jwt": true, "api-key": true, "internal": true}
+	if !validSchemes[req.AuthScheme] {
+		respondError(c, http.StatusBadRequest, "auth_scheme must be none, platform-jwt, api-key, or internal")
+		return
+	}
+
+	var appCount int
+	if err := h.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'App' AND name = $3`,
+		projectID, envID, appName,
+	).Scan(&appCount); err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to verify app")
+		return
+	}
+	if appCount == 0 {
+		respondError(c, http.StatusNotFound, "app not found")
+		return
+	}
+
+	publicApiName := strings.ReplaceAll(req.FQDN, ".", "-")
+
+	var existing int
+	if err := h.pool.QueryRow(c.Request.Context(),
+		`SELECT COUNT(*) FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'PublicApi' AND name = $3`,
+		projectID, envID, publicApiName,
+	).Scan(&existing); err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to check uniqueness")
+		return
+	}
+	if existing > 0 {
+		respondError(c, http.StatusConflict, "a domain with that FQDN already exists in this environment")
+		return
+	}
+
+	payload := models.CreatePublicApiPayload{
+		AppName:        appName,
+		PublicApiName:  publicApiName,
+		FQDN:           req.FQDN,
+		AuthEnabled:    req.AuthEnabled,
+		AuthScheme:     req.AuthScheme,
+		AuthScopes:     req.AuthScopes,
+		SwaggerEnabled: req.SwaggerEnabled,
+		SwaggerPath:    req.SwaggerPath,
+		SwaggerTitle:   req.SwaggerTitle,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to marshal payload")
+		return
+	}
+
+	var op models.Operation
+	err = h.pool.QueryRow(c.Request.Context(),
+		`INSERT INTO operations (actor_id, project_id, environment_id, action, resource_kind, resource_name, status, payload)
+		 VALUES ($1, $2, $3, 'CreatePublicApi', 'PublicApi', $4, 'Created', $5)
+		 RETURNING id, actor_id, project_id, environment_id, action, resource_kind, resource_name,
+		           status, payload, validation_result, git_commit, git_path, argo_application,
+		           error_code, error_message, created_at, updated_at`,
+		claims.UserID, projectID, envID, publicApiName, payloadBytes,
+	).Scan(
+		&op.ID, &op.ActorID, &op.ProjectID, &op.EnvironmentID,
+		&op.Action, &op.ResourceKind, &op.ResourceName,
+		&op.Status, &op.Payload, &op.ValidationResult,
+		&op.GitCommit, &op.GitPath, &op.ArgoApplication,
+		&op.ErrorCode, &op.ErrorMessage, &op.CreatedAt, &op.UpdatedAt,
+	)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "failed to create operation")
+		return
+	}
+
+	auditMeta, _ := json.Marshal(payload)
+	_, _ = h.pool.Exec(c.Request.Context(),
+		`INSERT INTO audit_events (actor_id, project_id, operation_id, action, resource_kind, resource_name, metadata)
+		 VALUES ($1, $2, $3, 'CreatePublicApi', 'PublicApi', $4, $5)`,
+		claims.UserID, projectID, op.ID, publicApiName, auditMeta,
+	)
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"operation": op,
+		"message":   "Domain registration queued",
+	})
+}
