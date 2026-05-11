@@ -7,7 +7,7 @@ def DOCKER_CLI_IMAGE   = 'docker:29-cli'
 def DOCKER_DIND_IMAGE  = 'docker:29-dind'
 
 def GITHUB_REGISTRY  = 'ghcr.io'
-def GITHUB_ORG       = 'DADA-TUDA'
+def GITHUB_ORG       = 'dada-tuda'
 def BACKEND_IMAGE   = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-backend"
 def FRONTEND_IMAGE  = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-frontend"
 

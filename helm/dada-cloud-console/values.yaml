@@ -1,5 +1,5 @@
 global:
-  imageRegistry: ghcr.io/DADA-TUDA
+  imageRegistry: ghcr.io/dada-tuda
   imagePullSecrets:
     - name: github-container-registry
   labels:
