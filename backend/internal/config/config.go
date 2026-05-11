@@ -15,6 +15,7 @@ type Config struct {
 	Port            string
 	LogLevel        string
 	DevMode         bool
+	ClusterLBIP     string
 }
 
 // Load reads configuration from environment variables.
@@ -29,6 +30,7 @@ func Load() (*Config, error) {
 		Port:             getEnv("PORT", "8080"),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		DevMode:          getEnv("DEV_MODE", "false") == "true",
+		ClusterLBIP:      getEnv("CLUSTER_LB_IP", "93.189.231.60"),
 	}
 
 	if cfg.DBURL == "" {
