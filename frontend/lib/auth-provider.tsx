@@ -12,37 +12,57 @@ interface AuthContextValue {
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
+const AUTH_CHANGE_EVENT = "dada-auth-change";
+
+function readAuthFromStorage() {
+  const storedToken = localStorage.getItem("dada_token");
+  const storedUser = localStorage.getItem("dada_user");
+  if (!storedToken || !storedUser) {
+    return { user: null, token: null, isLoading: false };
+  }
+  try {
+    return {
+      user: JSON.parse(storedUser) as User,
+      token: storedToken,
+      isLoading: false,
+    };
+  } catch {
+    return { user: null, token: null, isLoading: false };
+  }
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [auth, setAuth] = useState<{ user: User | null; token: string | null; isLoading: boolean }>(
+    { user: null, token: null, isLoading: true },
+  );
 
   useEffect(() => {
-    const storedToken = localStorage.getItem("dada_token");
-    const storedUser = localStorage.getItem("dada_user");
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser) as User);
-    }
-    setIsLoading(false);
+    // Initial hydration from localStorage
+    setAuth(readAuthFromStorage());
+
+    const handler = () => setAuth(readAuthFromStorage());
+    window.addEventListener("storage", handler);
+    window.addEventListener(AUTH_CHANGE_EVENT, handler as EventListener);
+    return () => {
+      window.removeEventListener("storage", handler);
+      window.removeEventListener(AUTH_CHANGE_EVENT, handler as EventListener);
+    };
   }, []);
 
   function login(newToken: string, newUser: User) {
     localStorage.setItem("dada_token", newToken);
     localStorage.setItem("dada_user", JSON.stringify(newUser));
-    setToken(newToken);
-    setUser(newUser);
+    window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
   }
 
   function logout() {
     localStorage.removeItem("dada_token");
     localStorage.removeItem("dada_user");
-    setToken(null);
-    setUser(null);
+    window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
   }
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, isLoading }}>
+    <AuthContext.Provider value={{ ...auth, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

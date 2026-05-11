@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { projectsApi } from "@/lib/api";
@@ -91,34 +91,47 @@ export default function OperationsPage() {
   const highlightId = searchParams.get("highlight");
 
   const [operations, setOperations] = useState<Operation[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(highlightId);
 
-  const fetchOperations = useCallback(async () => {
-    try {
-      const data = await projectsApi.operations(projectId);
-      setOperations(data.operations ?? []);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load operations");
-    }
-  }, [projectId]);
-
   useEffect(() => {
-    setIsLoading(true);
-    fetchOperations().finally(() => setIsLoading(false));
-  }, [fetchOperations]);
+    let cancelled = false;
+    void projectsApi
+      .operations(projectId)
+      .then((data) => {
+        if (cancelled) return;
+        setOperations(data.operations ?? []);
+        setError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load operations");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoadedProjectId(projectId);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
 
   // Auto-refresh if any operation is in-progress
   useEffect(() => {
     const hasInProgress = operations.some((op) => isInProgress(op.status));
     if (!hasInProgress) return;
-    const interval = setInterval(fetchOperations, 3000);
+    const interval = setInterval(() => {
+      void projectsApi.operations(projectId).then((data) => {
+        setOperations(data.operations ?? []);
+        setError(null);
+      });
+    }, 3000);
     return () => clearInterval(interval);
-  }, [operations, fetchOperations]);
+  }, [operations, projectId]);
 
-  if (isLoading) {
+  if (loadedProjectId !== projectId) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Spinner size="lg" />

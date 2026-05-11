@@ -51,7 +51,7 @@ export default function DatabasesPage() {
   const [selectedEnvId, setSelectedEnvId] = useState<string>("");
   const [databases, setDatabases] = useState<ResourceSnapshot[]>([]);
   const [isLoadingEnvs, setIsLoadingEnvs] = useState(true);
-  const [isLoadingDbs, setIsLoadingDbs] = useState(false);
+  const [isLoadingDbs, setIsLoadingDbs] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -75,17 +75,20 @@ export default function DatabasesPage() {
         setEnvironments(envs);
         if (envs.length > 0) {
           setSelectedEnvId(envs[0].id);
+        } else {
+          setIsLoadingDbs(false);
         }
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load project"))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load project");
+        setIsLoadingDbs(false);
+      })
       .finally(() => setIsLoadingEnvs(false));
   }, [projectId]);
 
   // Load databases when env changes
   useEffect(() => {
     if (!selectedEnvId) return;
-    setIsLoadingDbs(true);
-    setError(null);
     databasesApi
       .list(projectId, selectedEnvId)
       .then((data) => setDatabases(data.databases ?? []))
@@ -95,6 +98,12 @@ export default function DatabasesPage() {
 
   function handleFormChange(field: keyof CreateDbForm, value: string | boolean) {
     setForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function handleEnvironmentChange(envId: string) {
+    setIsLoadingDbs(true);
+    setError(null);
+    setSelectedEnvId(envId);
   }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -173,7 +182,7 @@ export default function DatabasesPage() {
           {environments.map((env) => (
             <button
               key={env.id}
-              onClick={() => setSelectedEnvId(env.id)}
+              onClick={() => handleEnvironmentChange(env.id)}
               className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
                 selectedEnvId === env.id
                   ? "bg-white text-gray-900 shadow-sm"
