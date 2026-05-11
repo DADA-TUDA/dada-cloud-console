@@ -153,6 +153,8 @@ func (w *Worker) processOperation(ctx context.Context, op *models.Operation) err
 		return w.processCreateApp(ctx, op)
 	case "DeployImageVersion":
 		return w.processDeployImageVersion(ctx, op)
+	case "CreatePublicApi":
+		return w.processCreatePublicApi(ctx, op)
 	default:
 		return fmt.Errorf("unknown action: %s", op.Action)
 	}
@@ -495,6 +497,151 @@ func (w *Worker) processDeployImageVersion(ctx context.Context, op *models.Opera
 		w.updateStatus(ctx, op.ID, models.OperationStatusWaitingForArgoSync)
 	}
 	return nil
+}
+
+func (w *Worker) processCreatePublicApi(ctx context.Context, op *models.Operation) error {
+	var payload models.CreatePublicApiPayload
+	if err := json.Unmarshal(op.Payload, &payload); err != nil {
+		return fmt.Errorf("parsing CreatePublicApi payload: %w", err)
+	}
+
+	var projectName, envName, envNamespace string
+	err := w.pool.QueryRow(ctx,
+		`SELECT p.name, e.name, e.namespace
+		 FROM projects p JOIN environments e ON e.project_id = p.id
+		 WHERE p.id = $1 AND e.id = $2`,
+		op.ProjectID, op.EnvironmentID,
+	).Scan(&projectName, &envName, &envNamespace)
+	if err != nil {
+		return fmt.Errorf("fetching project/env for CreatePublicApi: %w", err)
+	}
+
+	var envIDVal interface{} = nil
+	if op.EnvironmentID != nil {
+		envIDVal = *op.EnvironmentID
+	}
+
+	// Read app port from snapshot
+	var summaryRaw []byte
+	err = w.pool.QueryRow(ctx,
+		`SELECT summary_json FROM resource_snapshots
+		 WHERE project_id = $1 AND environment_id = $2 AND kind = 'App' AND name = $3`,
+		op.ProjectID, envIDVal, payload.AppName,
+	).Scan(&summaryRaw)
+	if err != nil {
+		return fmt.Errorf("loading app snapshot for CreatePublicApi: %w", err)
+	}
+	var appSpec map[string]interface{}
+	if err := json.Unmarshal(summaryRaw, &appSpec); err != nil {
+		return fmt.Errorf("parsing app snapshot: %w", err)
+	}
+	portVal, _ := appSpec["port"].(float64)
+	if portVal == 0 {
+		portVal = 8080
+	}
+
+	w.updateStatus(ctx, op.ID, models.OperationStatusRendering)
+	spec := gitwriter.PublicApiSpec{
+		Name:           payload.PublicApiName,
+		Namespace:      envNamespace,
+		ProjectSlug:    projectName,
+		EnvSlug:        envName,
+		ServiceName:    payload.AppName,
+		ServicePort:    int(portVal),
+		FQDN:           payload.FQDN,
+		LBTarget:       w.cfg.ClusterLBIP,
+		AuthEnabled:    payload.AuthEnabled,
+		AuthScheme:     payload.AuthScheme,
+		AuthScopes:     payload.AuthScopes,
+		SwaggerEnabled: payload.SwaggerEnabled,
+		SwaggerPath:    payload.SwaggerPath,
+		SwaggerTitle:   payload.SwaggerTitle,
+		OperationID:    op.ID.String(),
+	}
+	yaml, err := gitwriter.RenderPublicApi(spec)
+	if err != nil {
+		return fmt.Errorf("rendering PublicApi manifest: %w", err)
+	}
+
+	w.updateStatus(ctx, op.ID, models.OperationStatusCommittingToGit)
+	gitPath := gitwriter.PublicApiGitPath(projectName, envName, payload.AppName, payload.PublicApiName)
+	commitMsg := fmt.Sprintf(
+		"[DADA Console] Register domain %s for app %s in project %s\n\nOperation: %s\nActor: %s\nProject: %s\nEnvironment: %s\nResource: PublicApi/%s\n",
+		payload.FQDN, payload.AppName, projectName,
+		op.ID, op.ActorID, projectName, envName, payload.PublicApiName,
+	)
+	sha, err := w.gitWriter.CommitManifest(gitPath, yaml, commitMsg)
+	if err != nil {
+		return fmt.Errorf("git commit for CreatePublicApi: %w", err)
+	}
+
+	_, err = w.pool.Exec(ctx,
+		`UPDATE operations SET status = 'Committed', git_commit = $1, git_path = $2, updated_at = NOW() WHERE id = $3`,
+		sha, gitPath, op.ID)
+	if err != nil {
+		return fmt.Errorf("updating committed status for CreatePublicApi: %w", err)
+	}
+
+	summaryJSON, _ := json.Marshal(map[string]interface{}{
+		"app_name":        payload.AppName,
+		"fqdn":            payload.FQDN,
+		"auth_enabled":    payload.AuthEnabled,
+		"auth_scheme":     payload.AuthScheme,
+		"swagger_enabled": payload.SwaggerEnabled,
+		"status":          "Pending",
+		"message":         "Domain registration in progress",
+	})
+	_, err = w.pool.Exec(ctx, `
+		INSERT INTO resource_snapshots (project_id, environment_id, kind, name, phase, summary_json)
+		VALUES ($1, $2, 'PublicApi', $3, 'Pending', $4)
+		ON CONFLICT (project_id, environment_id, kind, name)
+		DO UPDATE SET phase = 'Pending', summary_json = EXCLUDED.summary_json, last_synced_at = NOW()
+	`, op.ProjectID, envIDVal, payload.PublicApiName, summaryJSON)
+	if err != nil {
+		log.Error().Err(err).Msg("creating PublicApi resource snapshot")
+	}
+
+	if w.cfg.DevMode {
+		w.simulatePublicApiReady(ctx, op.ID, op.ProjectID, op.EnvironmentID, payload.PublicApiName, summaryJSON)
+	} else {
+		w.updateStatus(ctx, op.ID, models.OperationStatusWaitingForArgoSync)
+	}
+
+	return nil
+}
+
+func (w *Worker) simulatePublicApiReady(ctx context.Context, opID, projectID uuid.UUID, environmentID *uuid.UUID, name string, specJSON []byte) {
+	steps := []struct {
+		status models.OperationStatus
+		delay  time.Duration
+	}{
+		{models.OperationStatusWaitingForArgoSync, 2 * time.Second},
+		{models.OperationStatusSyncing, 3 * time.Second},
+		{models.OperationStatusReconciling, 2 * time.Second},
+		{models.OperationStatusReady, 0},
+	}
+	for _, step := range steps {
+		time.Sleep(step.delay)
+		w.updateStatus(ctx, opID, step.status)
+	}
+
+	var spec map[string]interface{}
+	_ = json.Unmarshal(specJSON, &spec)
+	spec["status"] = "Ready"
+	spec["message"] = "Domain registered by DADA Console"
+	readyJSON, _ := json.Marshal(spec)
+
+	var envIDVal interface{} = nil
+	if environmentID != nil {
+		envIDVal = *environmentID
+	}
+	_, err := w.pool.Exec(ctx,
+		`UPDATE resource_snapshots SET phase = 'Ready', summary_json = $1, last_synced_at = NOW()
+		 WHERE project_id = $2 AND environment_id = $3 AND kind = 'PublicApi' AND name = $4`,
+		readyJSON, projectID, envIDVal, name)
+	if err != nil {
+		log.Error().Err(err).Msg("updating PublicApi snapshot to Ready")
+	}
 }
 
 func (w *Worker) updateStatus(ctx context.Context, opID uuid.UUID, status models.OperationStatus) {
