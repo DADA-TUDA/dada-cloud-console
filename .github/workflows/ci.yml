@@ -70,6 +70,26 @@ jobs:
       - name: Docker build frontend image
         run: docker build -t dada-cloud-console-frontend:${GITHUB_SHA::8} -f frontend/Dockerfile frontend
 
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push backend image to ghcr.io
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+        run: |
+          docker tag dada-cloud-console-backend:${GITHUB_SHA::8} ghcr.io/dada-tuda/dada-cloud-console-backend:${GITHUB_SHA::8}
+          docker push ghcr.io/dada-tuda/dada-cloud-console-backend:${GITHUB_SHA::8}
+
+      - name: Push frontend image to ghcr.io
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/master')
+        run: |
+          docker tag dada-cloud-console-frontend:${GITHUB_SHA::8} ghcr.io/dada-tuda/dada-cloud-console-frontend:${GITHUB_SHA::8}
+          docker push ghcr.io/dada-tuda/dada-cloud-console-frontend:${GITHUB_SHA::8}
+
       - name: Upload backend binary
         uses: actions/upload-artifact@v4
         with:
