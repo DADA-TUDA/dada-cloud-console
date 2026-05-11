@@ -113,3 +113,22 @@ export interface DeployImageResponse {
   operation: Operation;
   message: string;
 }
+
+export interface EndpointSummary {
+  app_name: string;
+  fqdn: string;
+  auth_enabled: boolean;
+  auth_scheme: string;
+  swagger_enabled: boolean;
+  status: string;
+  message: string;
+}
+
+export interface EndpointsResponse {
+  endpoints: ResourceSnapshot[];
+}
+
+export interface CreateEndpointResponse {
+  operation: Operation;
+  message: string;
+}

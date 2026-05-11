@@ -12,6 +12,8 @@ import type {
   AppsResponse,
   CreateAppResponse,
   DeployImageResponse,
+  EndpointsResponse,
+  CreateEndpointResponse,
 } from "./types";
 
 // Empty string → relative URLs → requests go through the ingress proxy.
@@ -121,5 +123,31 @@ export const appsApi = {
     apiFetch<DeployImageResponse>(
       `/api/v1/projects/${projectId}/environments/${envId}/apps/${appName}/image`,
       { method: "PATCH", body: { image } }
+    ),
+};
+
+export const endpointsApi = {
+  list: (projectId: string, envId: string, appName: string) =>
+    apiFetch<EndpointsResponse>(
+      `/api/v1/projects/${projectId}/environments/${envId}/apps/${appName}/endpoints`
+    ),
+
+  create: (
+    projectId: string,
+    envId: string,
+    appName: string,
+    data: {
+      fqdn: string;
+      auth_enabled: boolean;
+      auth_scheme: string;
+      auth_scopes: string[];
+      swagger_enabled: boolean;
+      swagger_path: string;
+      swagger_title: string;
+    }
+  ) =>
+    apiFetch<CreateEndpointResponse>(
+      `/api/v1/projects/${projectId}/environments/${envId}/apps/${appName}/endpoints`,
+      { method: "POST", body: data }
     ),
 };
