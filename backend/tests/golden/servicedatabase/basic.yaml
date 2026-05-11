@@ -8,11 +8,10 @@ metadata:
     dada.io/environment: prod
     dada.io/operation: op-test-1234
 spec:
-  appRef:
-    name: codex-lb
-  engine: postgres
+  appRef: codex-lb
+  engine: postgresql
   database: codexlb
   backup:
     enabled: false
-    schedule: daily
+    frequency: daily
     retention: 14d

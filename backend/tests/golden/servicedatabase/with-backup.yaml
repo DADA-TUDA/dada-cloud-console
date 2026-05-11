@@ -8,11 +8,10 @@ metadata:
     dada.io/environment: prod
     dada.io/operation: op-test-5678
 spec:
-  appRef:
-    name: profi-backend
-  engine: postgres
+  appRef: profi-backend
+  engine: postgresql
   database: profi
   backup:
     enabled: true
-    schedule: daily
+    frequency: daily
     retention: 7d
