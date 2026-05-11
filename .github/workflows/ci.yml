@@ -14,6 +14,9 @@ jobs:
     name: Build and verify release path
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout
