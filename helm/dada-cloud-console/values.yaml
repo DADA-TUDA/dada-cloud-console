@@ -1,7 +1,7 @@
 global:
-  imageRegistry: nexus.dada-tuda.ru/dada
+  imageRegistry: ghcr.io/DADA-TUDA
   imagePullSecrets:
-    - name: nexus-cred
+    - name: github-container-registry
   labels:
     app.kubernetes.io/part-of: dada-cloud
 
