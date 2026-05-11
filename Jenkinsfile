@@ -294,7 +294,7 @@ spec:
                 if (shouldPush) {
                     runStage('Docker push') {
                         withCredentials([usernamePassword(
-                                credentialsId: 'github-container-registry-token',
+                                credentialsId: 'gh-token',
                                 usernameVariable: 'GITHUB_USERNAME',
                                 passwordVariable: 'GITHUB_TOKEN'
                         )]) {
