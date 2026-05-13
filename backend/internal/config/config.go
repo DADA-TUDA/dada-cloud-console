@@ -7,30 +7,24 @@ import (
 
 // Config holds all application configuration loaded from environment variables.
 type Config struct {
-	DBURL           string
-	JWTSecret       string
-	GitStateRepoPath string
-	GitBotName      string
-	GitBotEmail     string
-	Port            string
-	LogLevel        string
-	DevMode         bool
-	ClusterLBIP     string
+	DBURL       string
+	JWTSecret   string
+	Port        string
+	LogLevel    string
+	DevMode     bool
+	ClusterLBIP string
 }
 
 // Load reads configuration from environment variables.
 // Returns an error if any required variable is missing.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DBURL:            getEnv("DB_URL", ""),
-		JWTSecret:        getEnv("JWT_SECRET", ""),
-		GitStateRepoPath: getEnv("GIT_STATE_REPO_PATH", "/tmp/dada-state-repo"),
-		GitBotName:       getEnv("GIT_BOT_NAME", "DADA Platform Bot"),
-		GitBotEmail:      getEnv("GIT_BOT_EMAIL", "bot@dada-tuda.ru"),
-		Port:             getEnv("PORT", "8080"),
-		LogLevel:         getEnv("LOG_LEVEL", "info"),
-		DevMode:          getEnv("DEV_MODE", "false") == "true",
-		ClusterLBIP:      getEnv("CLUSTER_LB_IP", "93.189.231.60"),
+		DBURL:       getEnv("DB_URL", ""),
+		JWTSecret:   getEnv("JWT_SECRET", ""),
+		Port:        getEnv("PORT", "8080"),
+		LogLevel:    getEnv("LOG_LEVEL", "info"),
+		DevMode:     getEnv("DEV_MODE", "false") == "true",
+		ClusterLBIP: getEnv("CLUSTER_LB_IP", "93.189.231.60"),
 	}
 
 	if cfg.DBURL == "" {

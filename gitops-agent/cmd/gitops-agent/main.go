@@ -1,0 +1,64 @@
+package main
+
+import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/dada-tuda/console/gitops-agent/internal/config"
+	"github.com/dada-tuda/console/gitops-agent/internal/db"
+	"github.com/dada-tuda/console/gitops-agent/internal/git"
+	"github.com/dada-tuda/console/gitops-agent/internal/server"
+	"github.com/dada-tuda/console/gitops-agent/internal/worker"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+func main() {
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal().Err(err).Msg("loading config")
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("connecting to database")
+	}
+	defer pool.Close()
+
+	defaultMgr := git.New(git.RepoConfig{
+		RepoURL:   cfg.DefaultRepoURL,
+		Branch:    cfg.DefaultBranch,
+		Username:  cfg.DefaultUsername,
+		Token:     cfg.DefaultToken,
+		LocalBase: cfg.RepoLocalPath,
+	})
+	if err := defaultMgr.EnsureCloned(); err != nil {
+		log.Fatal().Err(err).Msg("cloning default repo")
+	}
+
+	dbw := worker.NewDBWatcher(pool, cfg)
+	gitw := worker.NewGitWatcher(pool, cfg, defaultMgr)
+
+	go dbw.Start(ctx)
+	go gitw.Start(ctx)
+
+	if cfg.WebhookPort != "" {
+		webhookSecret := ""
+		srv := server.New(":"+cfg.WebhookPort, webhookSecret, gitw)
+		go func() {
+			if err := srv.Start(ctx); err != nil {
+				log.Error().Err(err).Msg("webhook server error")
+			}
+		}()
+	}
+
+	<-ctx.Done()
+	log.Info().Msg("shutting down")
+}

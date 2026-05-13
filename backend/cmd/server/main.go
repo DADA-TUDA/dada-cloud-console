@@ -14,7 +14,6 @@ import (
 	"github.com/dada-tuda/console/backend/internal/api"
 	"github.com/dada-tuda/console/backend/internal/config"
 	"github.com/dada-tuda/console/backend/internal/db"
-	"github.com/dada-tuda/console/backend/internal/worker"
 	"github.com/joho/godotenv"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -55,10 +54,6 @@ func main() {
 		log.Fatal().Err(err).Msg("failed to run migrations")
 	}
 	log.Info().Msg("migrations complete")
-
-	// Start worker goroutine
-	w := worker.New(pool, cfg)
-	go w.Start(context.Background())
 
 	// Set up HTTP router
 	router := api.SetupRouter(pool, cfg)
