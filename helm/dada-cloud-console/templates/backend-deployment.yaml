@@ -37,9 +37,6 @@ spec:
                 name: {{ include "dada-cloud-console.fullname" . }}-config
             - secretRef:
                 name: {{ default (printf "%s-backend" (include "dada-cloud-console.fullname" .)) .Values.backend.existingSecret }}
-          volumeMounts:
-            - name: state-repo
-              mountPath: /var/lib/dada-state
           readinessProbe:
             httpGet:
               path: /health
@@ -54,12 +51,4 @@ spec:
             periodSeconds: 20
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
-      volumes:
-        - name: state-repo
-          {{- if .Values.backend.persistence.enabled }}
-          persistentVolumeClaim:
-            claimName: {{ include "dada-cloud-console.fullname" . }}-state
-          {{- else }}
-          emptyDir: {}
-          {{- end }}
 {{- end }}

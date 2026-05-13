@@ -17,18 +17,11 @@ backend:
   env:
     APP_ENV: production
     HTTP_PORT: "8080"
-    GIT_STATE_REPO_URL: ""
-    GIT_STATE_REPO_BRANCH: "gitops-state"
-    GIT_STATE_REPO_LOCAL_PATH: "/var/lib/dada-state"
-    GIT_AUTHOR_NAME: "DADA Platform Bot"
-    GIT_AUTHOR_EMAIL: "platform-bot@dada-tuda.ru"
     ARGO_CLUSTER_NAME: ""
   existingSecret: ""
   secret:
     DATABASE_URL: "postgres://dada:change-me@postgresql:5432/dada_console?sslmode=disable"
     JWT_SECRET: "change-me"
-    GIT_USERNAME: "platform-bot"
-    GIT_TOKEN: "change-me"
   persistence:
     enabled: true
     size: 5Gi
@@ -40,6 +33,40 @@ backend:
     limits:
       cpu: 500m
       memory: 512Mi
+
+gitopsAgent:
+  enabled: true
+  image:
+    repository: dada-cloud-console-gitops-agent
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  # webhookPort: when set, exposes a /webhook/github endpoint for push events
+  webhookPort: 8090
+  env:
+    GITOPS_DEFAULT_BRANCH: "main"
+    GITOPS_BOT_NAME: "DADA Platform Bot"
+    GITOPS_BOT_EMAIL: "bot@dada-tuda.ru"
+    GITOPS_POLL_INTERVAL_DB: "3s"
+    GITOPS_POLL_INTERVAL_GIT: "30s"
+    CLUSTER_LB_IP: "93.189.231.60"
+  existingSecret: ""
+  secret:
+    DATABASE_URL: "postgres://dada:change-me@postgresql:5432/dada_console?sslmode=disable"
+    GITOPS_DEFAULT_REPO_URL: "https://github.com/DADA-TUDA/argo-infra.git"
+    GITOPS_DEFAULT_USERNAME: "platform-bot"
+    GITOPS_DEFAULT_TOKEN: "change-me"
+    GITOPS_ENCRYPTION_KEY: "change-me-32-byte-hex-encoded-key"
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
 
 frontend:
   enabled: true

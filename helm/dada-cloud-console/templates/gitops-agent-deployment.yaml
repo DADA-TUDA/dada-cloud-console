@@ -1,0 +1,76 @@
+{{- if .Values.gitopsAgent.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dada-cloud-console.fullname" . }}-gitops-agent
+  labels:
+    {{- include "dada-cloud-console.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gitops-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "dada-cloud-console.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gitops-agent
+  template:
+    metadata:
+      labels:
+        {{- include "dada-cloud-console.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gitops-agent
+    spec:
+      serviceAccountName: {{ include "dada-cloud-console.fullname" . }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: gitops-agent
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.gitopsAgent.image.repository }}:{{ .Values.gitopsAgent.image.tag }}"
+          imagePullPolicy: {{ .Values.gitopsAgent.image.pullPolicy }}
+          {{- if .Values.gitopsAgent.webhookPort }}
+          ports:
+            - name: webhook
+              containerPort: {{ .Values.gitopsAgent.webhookPort }}
+          {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ default (printf "%s-gitops-agent" (include "dada-cloud-console.fullname" .)) .Values.gitopsAgent.existingSecret }}
+          env:
+            - name: GITOPS_REPO_LOCAL_PATH
+              value: /var/lib/gitops-repos
+            {{- if .Values.gitopsAgent.webhookPort }}
+            - name: GITOPS_WEBHOOK_PORT
+              value: {{ .Values.gitopsAgent.webhookPort | quote }}
+            {{- end }}
+            {{- range $key, $value := .Values.gitopsAgent.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: repos
+              mountPath: /var/lib/gitops-repos
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ default 8090 .Values.gitopsAgent.webhookPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ default 8090 .Values.gitopsAgent.webhookPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.gitopsAgent.resources | nindent 12 }}
+      volumes:
+        - name: repos
+          {{- if .Values.gitopsAgent.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "dada-cloud-console.fullname" . }}-gitops-repos
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}
