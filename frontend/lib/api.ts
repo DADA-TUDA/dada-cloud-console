@@ -17,7 +17,7 @@ import type {
 } from "./types";
 
 // Empty string → relative URLs → requests go through the ingress proxy.
-// Override with NEXT_PUBLIC_API_URL at build time only if needed (e.g. local dev).
+// Override with NEXT_PUBLIC_API_URL at build time only for non-prod targets.
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 function getToken(): string | null {
