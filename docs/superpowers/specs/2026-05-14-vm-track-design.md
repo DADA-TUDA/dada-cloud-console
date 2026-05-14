@@ -10,7 +10,7 @@
 
 v1 deploys Apps exclusively to Kubernetes via GitOps (gitops-agent → Git → ArgoCD → K8s CRDs).  
 v2 adds a parallel **VM track**: customer workloads run as Docker Compose stacks on dedicated VDS
-instances (Beget OpenStack), managed remotely via Portainer CE + Edge Agent.
+instances (Beget Cloud), managed remotely via Portainer CE + Edge Agent.
 
 The user-facing model is **unified**: an `App` is an `App` regardless of runtime. Only the
 infrastructure backing the environment differs.
@@ -385,7 +385,15 @@ Backend proxies chunked Docker log stream → frontend receives as `text/event-s
 
 ---
 
-## 6. Terraform — OpenStack Provider
+## 6. Terraform — Beget Provider
+
+> **Critical finding:** Beget Cloud does NOT expose OpenStack API. Cannot use
+> `terraform-provider-openstack/openstack`. Must use Beget's own provider:
+> `tf.beget.com/beget/beget`.  
+>
+> **Second critical finding:** `beget_compute_instance` has NO `user_data`/cloud-init argument.
+> VM bootstrap (Docker, Edge Agent, observability) is done via **SSH provisioning**
+> after Terraform creates the instance (see §7).
 
 ### Provider config
 
@@ -394,26 +402,21 @@ Backend proxies chunked Docker log stream → frontend receives as `text/event-s
 
 terraform {
   required_providers {
-    openstack = {
-      source  = "terraform-provider-openstack/openstack"
-      version = "~> 3.0"   # latest stable as of 2025
+    beget = {
+      source = "tf.beget.com/beget/beget"
+      # No version constraints in public registry — pin via lock file
     }
   }
 
-  # State stored per-workspace in Postgres
-  # Init: terraform init -backend-config="conn_str=$TF_STATE_CONN_STR"
-  #                      -backend-config="schema_name=tfstate_${app_server_id}"
+  # State per-AppServer in Postgres
+  # Init: terraform init
+  #         -backend-config="conn_str=$TF_STATE_CONN_STR"
+  #         -backend-config="schema_name=tfstate_${app_server_id}"
   backend "pg" {}
 }
 
-provider "openstack" {
-  auth_url            = var.os_auth_url            # https://api.beget.com:5000/v3
-  region              = var.os_region              # RegionOne (Beget default)
-  tenant_name         = var.os_tenant_name         # project name in Beget cloud
-  user_name           = var.os_username
-  password            = var.os_password
-  user_domain_name    = "Default"
-  project_domain_name = "Default"
+provider "beget" {
+  token = var.beget_token   # Bearer token from Beget control panel
 }
 ```
 
@@ -422,103 +425,46 @@ provider "openstack" {
 ```hcl
 # portainer-agent/internal/terraform/templates/variables.tf
 
-variable "os_auth_url"            { type = string }
-variable "os_region"              { type = string }
-variable "os_tenant_name"         { type = string }
-variable "os_username"            { type = string }
-variable "os_password"            { type = string; sensitive = true }
-variable "server_name"            { type = string }   # "client-a-prod-1"
-variable "flavor"                 { type = string }   # "1vcpu-2gb"
-variable "os_image"               { type = string }   # "ubuntu-22.04"
-variable "ssh_key_name"           { type = string }
-variable "network_name"           { type = string; default = "network" }
-variable "portainer_edge_key"     { type = string; sensitive = true }
-# Observability
-variable "prometheus_remote_write_url" { type = string }
-variable "prometheus_remote_write_user" { type = string }
-variable "prometheus_remote_write_pass" { type = string; sensitive = true }
-variable "elasticsearch_url"      { type = string }
-variable "elasticsearch_api_key"  { type = string; sensitive = true }
+variable "beget_token"    { type = string; sensitive = true }
+variable "server_name"    { type = string }   # "client-a-prod-1"
+variable "region"         { type = string }   # "ru1" | "ru2" | "kz1" | "eu1"
+variable "cpu"            { type = number; default = 2 }
+variable "ram_mb"         { type = number; default = 2048 }
+variable "disk_mb"        { type = number; default = 20480 }
+variable "software_id"    { type = number }   # Ubuntu 22.04 ID from beget_softwares datasource
+variable "ssh_key_id"     { type = string }   # ID of pre-registered SSH key in Beget
 ```
 
 ### Resources
 
 ```hcl
-# portainer-agent/internal/terraform/templates/main.tf.tmpl (continued)
+# Discover available software (images) — use in data pipeline, not per-VM
+data "beget_softwares" "all" {}
 
-resource "openstack_compute_instance_v2" "app_server" {
-  name            = var.server_name
-  image_name      = var.os_image         # "ubuntu-22.04"
-  flavor_name     = var.flavor           # "1vcpu-2gb"
-  key_pair        = var.ssh_key_name
-  security_groups = ["default", "dada-app-server"]
+resource "beget_compute_instance" "app_server" {
+  name   = var.server_name
+  region = var.region
 
-  network {
-    name = var.network_name
+  cpu     = var.cpu
+  ram_mb  = var.ram_mb
+  disk_mb = var.disk_mb
+
+  image {
+    software {
+      id = var.software_id   # Ubuntu 22.04 ID (query once via data source)
+    }
   }
 
-  user_data = templatefile("${path.module}/cloud-init.yaml.tpl", {
-    server_name                   = var.server_name
-    portainer_edge_key            = var.portainer_edge_key
-    prometheus_remote_write_url   = var.prometheus_remote_write_url
-    prometheus_remote_write_user  = var.prometheus_remote_write_user
-    prometheus_remote_write_pass  = var.prometheus_remote_write_pass
-    elasticsearch_url             = var.elasticsearch_url
-    elasticsearch_api_key         = var.elasticsearch_api_key
-  })
+  access {
+    ssh_keys = [var.ssh_key_id]
+  }
 }
 
-# Floating IP for public access (app ports)
-resource "openstack_networking_floatingip_v2" "fip" {
-  pool = "external"
-}
+# Additional public IP if needed (Beget provides one by default)
+# resource "beget_additional_ip" "extra" { ... }
 
-resource "openstack_compute_floatingip_associate_v2" "fip" {
-  floating_ip = openstack_networking_floatingip_v2.fip.address
-  instance_id = openstack_compute_instance_v2.app_server.id
-}
-
-output "vm_ip" { value = openstack_networking_floatingip_v2.fip.address }
-output "vm_id" { value = openstack_compute_instance_v2.app_server.id }
-```
-
-### Security Group (created once, manually / via separate TF)
-
-```hcl
-resource "openstack_networking_secgroup_v2" "dada_app_server" {
-  name = "dada-app-server"
-}
-
-# Portainer Edge Agent tunnel (outbound only — SG rules are stateful)
-# Outbound: all (default in OpenStack)
-
-# App traffic inbound
-resource "openstack_networking_secgroup_rule_v2" "http"  {
-  direction = "ingress"; ethertype = "IPv4"
-  protocol = "tcp"; port_range_min = 80; port_range_max = 80
-  remote_ip_prefix = "0.0.0.0/0"
-  security_group_id = openstack_networking_secgroup_v2.dada_app_server.id
-}
-resource "openstack_networking_secgroup_rule_v2" "https" {
-  direction = "ingress"; ethertype = "IPv4"
-  protocol = "tcp"; port_range_min = 443; port_range_max = 443
-  remote_ip_prefix = "0.0.0.0/0"
-  security_group_id = openstack_networking_secgroup_v2.dada_app_server.id
-}
-
-# Prometheus scrape from cluster (restrict to cluster egress IP)
-resource "openstack_networking_secgroup_rule_v2" "node_exporter" {
-  direction = "ingress"; ethertype = "IPv4"
-  protocol = "tcp"; port_range_min = 9100; port_range_max = 9100
-  remote_ip_prefix = var.cluster_egress_cidr
-  security_group_id = openstack_networking_secgroup_v2.dada_app_server.id
-}
-resource "openstack_networking_secgroup_rule_v2" "cadvisor" {
-  direction = "ingress"; ethertype = "IPv4"
-  protocol = "tcp"; port_range_min = 8080; port_range_max = 8080
-  remote_ip_prefix = var.cluster_egress_cidr
-  security_group_id = openstack_networking_secgroup_v2.dada_app_server.id
-}
+output "vm_ip" { value = beget_compute_instance.app_server.ip_address }
+output "vm_id" { value = beget_compute_instance.app_server.id }
 ```
 
 ### terraform-exec Go integration
@@ -526,216 +472,291 @@ resource "openstack_networking_secgroup_rule_v2" "cadvisor" {
 ```go
 // portainer-agent/internal/terraform/executor.go
 
-import (
-    "github.com/hashicorp/terraform-exec/tfexec"
-)
+import "github.com/hashicorp/terraform-exec/tfexec"  // v0.25.2
 
-func (e *Executor) Apply(ctx context.Context, workspaceDir string, vars map[string]string) error {
-    tf, err := tfexec.NewTerraform(workspaceDir, e.terraformBin)
-    if err != nil { return err }
-
-    // Init with pg backend config
-    if err := tf.Init(ctx,
-        tfexec.BackendConfig("conn_str=" + e.pgConnStr),
-        tfexec.BackendConfig("schema_name=tfstate_" + workspaceID),
-        tfexec.Upgrade(false),
-    ); err != nil { return err }
-
-    // Build var options
-    varOpts := make([]tfexec.ApplyOption, 0, len(vars))
-    for k, v := range vars {
-        varOpts = append(varOpts, tfexec.Var(k + "=" + v))
-    }
-    varOpts = append(varOpts, tfexec.AutoApprove(true))
-
-    return tf.Apply(ctx, varOpts...)
+type Executor struct {
+    terraformBin string   // path to terraform binary in Docker image
+    pgConnStr    string   // postgres DSN for state backend
 }
 
-func (e *Executor) Destroy(ctx context.Context, workspaceDir string, vars map[string]string) error {
-    tf, _ := tfexec.NewTerraform(workspaceDir, e.terraformBin)
-    // same pattern, tf.Destroy(ctx, ...)
+func (e *Executor) Apply(ctx context.Context, workspaceDir, workspaceID string, vars map[string]string) (map[string]string, error) {
+    tf, err := tfexec.NewTerraform(workspaceDir, e.terraformBin)
+    if err != nil { return nil, err }
+
+    if err := tf.Init(ctx,
+        tfexec.Backend(true),
+        tfexec.BackendConfig("conn_str="+e.pgConnStr),
+        tfexec.BackendConfig("schema_name=tfstate_"+workspaceID),
+        tfexec.Upgrade(false),
+    ); err != nil { return nil, fmt.Errorf("tf init: %w", err) }
+
+    applyOpts := []tfexec.ApplyOption{tfexec.Lock(true)}
+    for k, v := range vars {
+        applyOpts = append(applyOpts, tfexec.Var(k+"="+v))
+    }
+    if err := tf.Apply(ctx, applyOpts...); err != nil {
+        return nil, fmt.Errorf("tf apply: %w", err)
+    }
+
+    return e.Output(ctx, workspaceDir)
+}
+
+func (e *Executor) Destroy(ctx context.Context, workspaceDir, workspaceID string, vars map[string]string) error {
+    tf, err := tfexec.NewTerraform(workspaceDir, e.terraformBin)
+    if err != nil { return err }
+    if err := tf.Init(ctx,
+        tfexec.BackendConfig("conn_str="+e.pgConnStr),
+        tfexec.BackendConfig("schema_name=tfstate_"+workspaceID),
+    ); err != nil { return err }
+    destroyOpts := []tfexec.DestroyOption{}
+    for k, v := range vars {
+        destroyOpts = append(destroyOpts, tfexec.Var(k+"="+v))
+    }
+    return tf.Destroy(ctx, destroyOpts...)
 }
 
 func (e *Executor) Output(ctx context.Context, workspaceDir string) (map[string]string, error) {
     tf, _ := tfexec.NewTerraform(workspaceDir, e.terraformBin)
     out, err := tf.Output(ctx)
-    result := map[string]string{}
+    if err != nil { return nil, err }
+    result := make(map[string]string, len(out))
     for k, v := range out {
-        result[k] = string(v.Value)  // json.RawMessage → string
+        result[k] = strings.Trim(string(v.Value), `"`)
     }
-    return result, err
+    return result, nil
 }
 ```
 
-> **Dockerfile note:** The portainer-agent Docker image must include the `terraform` binary.
-> Use multi-stage build: copy from `hashicorp/terraform:1.9` into the final image.
+> **Dockerfile:** multi-stage build — copy terraform binary from `hashicorp/terraform:1.9`.
+>
+> **PG backend isolation:** each AppServer gets `schema_name = "tfstate_{app_server_uuid}"`.
+> Postgres creates the schema + `states` table automatically on first `terraform init`.
+
+### Beget Software ID discovery (run once, hardcode)
+
+```bash
+# Using Beget Terraform data source to find Ubuntu 22.04 software ID
+terraform console
+> data.beget_softwares.all.softwares
+# Find the entry where name contains "Ubuntu 22.04"
+# Hardcode that ID in config (it won't change)
+```
+
+### Beget regions
+
+| Region | Location |
+|---|---|
+| `ru1` | Russia, St. Petersburg |
+| `ru2` | Russia, Moscow |
+| `kz1` | Kazakhstan, Astana |
+| `eu1` | Europe, Riga (Latvia) |
 
 ---
 
-## 7. cloud-init — Complete VM Bootstrap
+## 7. SSH Bootstrap — Complete VM Setup
 
-```yaml
-# portainer-agent/internal/terraform/templates/cloud-init.yaml.tpl
-#cloud-config
+> **Why SSH instead of cloud-init:** Beget's Terraform provider has no `user_data` argument.
+> After `terraform apply` completes and `vm_ip` is known, portainer-agent SSHes into the VM
+> and runs a bootstrap script. The deployment SSH key is pre-registered in Beget and passed
+> as `ssh_key_id` to the Terraform resource.
 
-package_update: true
-package_upgrade: false
-packages:
-  - docker.io
-  - docker-compose-plugin
-  - curl
-  - wget
+### Bootstrap flow in portainer-agent
 
-write_files:
-  # ── node_exporter systemd unit ──────────────────────────────────────
-  - path: /etc/systemd/system/node_exporter.service
-    permissions: "0644"
-    content: |
-      [Unit]
-      Description=Prometheus Node Exporter
-      After=network.target
-      [Service]
-      User=node_exporter
-      ExecStart=/usr/local/bin/node_exporter \
-        --collector.systemd \
-        --collector.processes
-      Restart=always
-      RestartSec=5
-      [Install]
-      WantedBy=multi-user.target
-
-  # ── filebeat config ─────────────────────────────────────────────────
-  - path: /etc/filebeat/filebeat.yml
-    permissions: "0600"
-    content: |
-      filebeat.inputs:
-        - type: container
-          paths:
-            - /var/lib/docker/containers/*/*.log
-          stream: all
-          processors:
-            - add_docker_metadata:
-                host: "unix:///var/run/docker.sock"
-            - drop_fields:
-                fields: ["agent", "ecs"]
-                ignore_missing: true
-
-      output.elasticsearch:
-        hosts: ["${elasticsearch_url}"]
-        api_key: "${elasticsearch_api_key}"
-        index: "dada-vm-logs-%{[container.labels.dada_io_app]:unknown}-%{+yyyy.MM.dd}"
-
-      setup.ilm.enabled: false
-      setup.template.enabled: false
-      logging.level: warning
-
-  # ── Prometheus remote-write config (for Prometheus Agent on VM) ──────
-  - path: /etc/prometheus-agent/prometheus.yml
-    permissions: "0644"
-    content: |
-      global:
-        scrape_interval: 30s
-        external_labels:
-          vm_name: "${server_name}"
-          environment: "vm"
-
-      scrape_configs:
-        - job_name: node_exporter
-          static_configs:
-            - targets: ["localhost:9100"]
-        - job_name: cadvisor
-          static_configs:
-            - targets: ["localhost:8080"]
-          metric_relabel_configs:
-            - source_labels: [container_label_dada_io_app]
-              target_label: app
-
-      remote_write:
-        - url: "${prometheus_remote_write_url}"
-          basic_auth:
-            username: "${prometheus_remote_write_user}"
-            password: "${prometheus_remote_write_pass}"
-
-runcmd:
-  # ── Docker setup ────────────────────────────────────────────────────
-  - systemctl enable docker --now
-
-  # ── node_exporter ───────────────────────────────────────────────────
-  - useradd --no-create-home --shell /bin/false node_exporter
-  - |
-    VERSION="1.8.2"
-    wget -q https://github.com/prometheus/node_exporter/releases/download/v$${VERSION}/node_exporter-$${VERSION}.linux-amd64.tar.gz \
-      -O /tmp/node_exporter.tar.gz
-    tar -xzf /tmp/node_exporter.tar.gz -C /tmp
-    mv /tmp/node_exporter-$${VERSION}.linux-amd64/node_exporter /usr/local/bin/
-    chown node_exporter:node_exporter /usr/local/bin/node_exporter
-    rm -rf /tmp/node_exporter*
-  - systemctl daemon-reload
-  - systemctl enable --now node_exporter
-
-  # ── cAdvisor (container metrics) ─────────────────────────────────────
-  - |
-    docker run -d \
-      --name cadvisor \
-      --restart unless-stopped \
-      --volume /:/rootfs:ro \
-      --volume /var/run:/var/run:ro \
-      --volume /sys:/sys:ro \
-      --volume /var/lib/docker/:/var/lib/docker:ro \
-      --publish 8080:8080 \
-      --detach \
-      gcr.io/cadvisor/cadvisor:v0.49.1
-
-  # ── Filebeat (log shipping) ───────────────────────────────────────────
-  - mkdir -p /etc/filebeat
-  - |
-    docker run -d \
-      --name filebeat \
-      --restart unless-stopped \
-      --user root \
-      --volume /etc/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro \
-      --volume /var/lib/docker/containers:/var/lib/docker/containers:ro \
-      --volume /var/run/docker.sock:/var/run/docker.sock:ro \
-      docker.elastic.co/beats/filebeat:8.13.4
-
-  # ── Prometheus Agent (remote write to central Prometheus) ─────────────
-  - mkdir -p /etc/prometheus-agent /var/lib/prometheus-agent
-  - |
-    docker run -d \
-      --name prometheus-agent \
-      --restart unless-stopped \
-      --volume /etc/prometheus-agent/prometheus.yml:/etc/prometheus/prometheus.yml:ro \
-      --volume /var/lib/prometheus-agent:/prometheus \
-      --network host \
-      prom/prometheus:v2.53.0 \
-      --config.file=/etc/prometheus/prometheus.yml \
-      --enable-feature=agent \
-      --storage.agent.path=/prometheus
-
-  # ── Portainer Edge Agent ──────────────────────────────────────────────
-  # EDGE_ID must match the EdgeID returned by POST /api/endpoints (with EnforceEdgeID=on)
-  # EDGE_INSECURE_POLL=0 — set to 1 only if Portainer uses self-signed cert
-  # Pin agent version to match Portainer CE version — never use :latest in prod
-  - |
-    docker run -d \
-      --name portainer_edge_agent \
-      --restart=always \
-      --volume /var/run/docker.sock:/var/run/docker.sock \
-      --volume /var/lib/docker/volumes:/var/lib/docker/volumes \
-      --volume /:/host \
-      --volume portainer_agent_data:/data \
-      -e EDGE=1 \
-      -e EDGE_ID="${server_name}" \
-      -e EDGE_KEY="${portainer_edge_key}" \
-      -e EDGE_INSECURE_POLL=0 \
-      portainer/agent:2.21.0
+```
+terraform apply → vm_ip obtained
+    ↓
+wait ~30s for SSH port to open (retry with backoff)
+    ↓
+SSH connect (key from AGENT_SSH_PRIVATE_KEY env)
+    ↓
+upload bootstrap.sh via SFTP (or heredoc over stdin)
+    ↓
+execute: sudo bash /tmp/bootstrap.sh
+    ↓
+monitor stdout for "BOOTSTRAP_COMPLETE" marker
+    ↓
+continue to WaitingForAgent phase
 ```
 
-> **cloud-init gotchas:**
-> - `write_files` runs before `runcmd` — always declare files in write_files, start services in runcmd.
-> - Terraform templatefile uses `$${VAR}` to escape `${VAR}` when the outer interpolation is HCL.
-> - `EDGE_INSECURE_POLL=1` required if Portainer uses a self-signed TLS cert.
-> - `--enable-feature=agent` puts Prometheus in Agent mode (no local TSDB, only remote_write).
+### Go SSH client
+
+```go
+// portainer-agent/internal/ssh/client.go
+import "golang.org/x/crypto/ssh"
+
+func RunBootstrap(ctx context.Context, host, user, privateKeyPEM string, script string) error {
+    signer, err := ssh.ParsePrivateKey([]byte(privateKeyPEM))
+    config := &ssh.ClientConfig{
+        User: user,   // "root" on Beget Ubuntu VDS
+        Auth: []ssh.AuthMethod{ssh.PublicKeys(signer)},
+        HostKeyCallback: ssh.InsecureIgnoreHostKey(), // acceptable for provisioning
+        Timeout: 10 * time.Second,
+    }
+
+    // Retry until SSH is ready (VM may still be booting)
+    var client *ssh.Client
+    for i := 0; i < 30; i++ {
+        client, err = ssh.Dial("tcp", host+":22", config)
+        if err == nil { break }
+        select { case <-ctx.Done(): return ctx.Err()
+                 case <-time.After(10*time.Second): }
+    }
+    if err != nil { return fmt.Errorf("ssh connect after retries: %w", err) }
+    defer client.Close()
+
+    session, _ := client.NewSession()
+    defer session.Close()
+
+    // Stream output for logging
+    session.Stdout = os.Stdout
+    session.Stderr = os.Stderr
+
+    return session.Run("bash -s") // script piped via Stdin
+}
+```
+
+### `bootstrap.sh` — complete VM setup script
+
+```bash
+#!/usr/bin/env bash
+# portainer-agent/internal/ssh/bootstrap.sh.tmpl
+# Rendered by portainer-agent Go text/template, piped via SSH stdin
+# Template vars: {{.ServerName}} {{.EdgeKey}} {{.EdgeID}}
+#                {{.PrometheusRemoteWriteURL}} {{.PrometheusUser}} {{.PrometheusPass}}
+#                {{.ElasticsearchURL}} {{.ElasticsearchAPIKey}}
+set -euo pipefail
+
+echo "[bootstrap] Starting VM setup for {{.ServerName}}"
+
+# ── Docker ───────────────────────────────────────────────────────────────
+apt-get update -qq
+apt-get install -y -qq docker.io docker-compose-plugin curl wget
+systemctl enable docker --now
+echo "[bootstrap] Docker ready"
+
+# ── node_exporter 1.8.2 ──────────────────────────────────────────────────
+useradd --no-create-home --shell /bin/false node_exporter 2>/dev/null || true
+NODE_VER="1.8.2"
+wget -q "https://github.com/prometheus/node_exporter/releases/download/v${NODE_VER}/node_exporter-${NODE_VER}.linux-amd64.tar.gz" -O /tmp/ne.tar.gz
+tar -xzf /tmp/ne.tar.gz -C /tmp
+mv "/tmp/node_exporter-${NODE_VER}.linux-amd64/node_exporter" /usr/local/bin/
+chown node_exporter:node_exporter /usr/local/bin/node_exporter
+rm -rf /tmp/ne.tar.gz "/tmp/node_exporter-${NODE_VER}.linux-amd64"
+
+cat > /etc/systemd/system/node_exporter.service << 'UNIT'
+[Unit]
+Description=Prometheus Node Exporter
+After=network.target
+[Service]
+User=node_exporter
+ExecStart=/usr/local/bin/node_exporter --collector.systemd --collector.processes
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload && systemctl enable --now node_exporter
+echo "[bootstrap] node_exporter :9100 started"
+
+# ── cAdvisor v0.49.1 ─────────────────────────────────────────────────────
+docker run -d \
+  --name cadvisor --restart unless-stopped \
+  -v /:/rootfs:ro -v /var/run:/var/run:ro \
+  -v /sys:/sys:ro -v /var/lib/docker/:/var/lib/docker:ro \
+  -p 8080:8080 gcr.io/cadvisor/cadvisor:v0.49.1
+echo "[bootstrap] cAdvisor :8080 started"
+
+# ── Prometheus Agent → central remote_write ───────────────────────────────
+mkdir -p /etc/prometheus-agent /var/lib/prometheus-agent
+cat > /etc/prometheus-agent/prometheus.yml << PROMEOF
+global:
+  scrape_interval: 30s
+  external_labels:
+    vm_name: "{{.ServerName}}"
+    runtime: "vm"
+scrape_configs:
+  - job_name: node_exporter
+    static_configs:
+      - targets: ["localhost:9100"]
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["localhost:8080"]
+    metric_relabel_configs:
+      - source_labels: [container_label_dada_io_app]
+        target_label: app
+remote_write:
+  - url: "{{.PrometheusRemoteWriteURL}}"
+    basic_auth:
+      username: "{{.PrometheusUser}}"
+      password: "{{.PrometheusPass}}"
+PROMEOF
+
+docker run -d \
+  --name prometheus-agent --restart unless-stopped \
+  -v /etc/prometheus-agent/prometheus.yml:/etc/prometheus/prometheus.yml:ro \
+  -v /var/lib/prometheus-agent:/prometheus \
+  --network host \
+  prom/prometheus:v2.53.0 \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --enable-feature=agent \
+  --storage.agent.path=/prometheus
+echo "[bootstrap] Prometheus Agent started (remote_write)"
+
+# ── Filebeat 8.13.4 → Elasticsearch ──────────────────────────────────────
+mkdir -p /etc/filebeat
+cat > /etc/filebeat/filebeat.yml << FBEOF
+filebeat.inputs:
+  - type: container
+    paths:
+      - /var/lib/docker/containers/*/*.log
+    stream: all
+    processors:
+      - add_docker_metadata:
+          host: "unix:///var/run/docker.sock"
+      - drop_fields:
+          fields: ["agent", "ecs"]
+          ignore_missing: true
+output.elasticsearch:
+  hosts: ["{{.ElasticsearchURL}}"]
+  api_key: "{{.ElasticsearchAPIKey}}"
+  index: "dada-vm-logs-%{[container.labels.dada_io_app]:unknown}-%{+yyyy.MM.dd}"
+setup.ilm.enabled: false
+setup.template.enabled: false
+logging.level: warning
+FBEOF
+
+docker run -d \
+  --name filebeat --restart unless-stopped --user root \
+  -v /etc/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro \
+  -v /var/lib/docker/containers:/var/lib/docker/containers:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  docker.elastic.co/beats/filebeat:8.13.4
+echo "[bootstrap] Filebeat started"
+
+# ── Portainer Edge Agent 2.21.0 ──────────────────────────────────────────
+# EDGE_ID registered in Portainer via POST /api/endpoints before terraform ran
+# EDGE_KEY from POST /api/endpoints response (EdgeKey field)
+docker run -d \
+  --name portainer_edge_agent --restart=always \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /var/lib/docker/volumes:/var/lib/docker/volumes \
+  -v /:/host -v portainer_agent_data:/data \
+  -e EDGE=1 \
+  -e EDGE_ID="{{.EdgeID}}" \
+  -e EDGE_KEY="{{.EdgeKey}}" \
+  -e EDGE_INSECURE_POLL=0 \
+  portainer/agent:2.21.0
+echo "[bootstrap] Portainer Edge Agent started (EDGE_ID={{.EdgeID}})"
+
+echo "BOOTSTRAP_COMPLETE"
+```
+
+> **SSH bootstrap notes:**
+> - Script rendered with Go `text/template` before piping via `session.Run("bash -s")`.
+> - portainer-agent scans stdout for `"BOOTSTRAP_COMPLETE"` to advance to `WaitingForAgent`.
+> - SSH retry: 30 × 10s = 5 min max wait for SSH port after VM boot.
+> - `EDGE_INSECURE_POLL=0` — change to `1` only if Portainer uses a self-signed TLS cert.
+> - `--enable-feature=agent` = Prometheus Agent mode (no local TSDB, only remote_write).
 
 ---
 
@@ -861,9 +882,11 @@ portainer-agent/
       executor.go            — tfexec wrapper: init, apply, destroy, output
       workspace.go           — create/clean workspace dir, copy templates
       templates/
-        main.tf.tmpl
+        main.tf.tmpl         — beget_compute_instance resource
         variables.tf
-        cloud-init.yaml.tpl
+    ssh/
+      client.go              — SSH connect with retry, run bootstrap script
+      bootstrap.sh.tmpl      — Go text/template rendered before SSH exec
     portainer/
       client.go              — HTTP client: endpoints, stacks, containers, logs
       models.go              — Endpoint, Stack, Container structs
@@ -892,11 +915,14 @@ DATABASE_URL
 PORTAINER_URL              https://portainer.internal.dada-tuda.ru
 PORTAINER_API_TOKEN        ptr_xxxx
 
-OS_AUTH_URL                https://api.beget.com:5000/v3
-OS_REGION                  RegionOne
-OS_TENANT_NAME
-OS_USERNAME
-OS_PASSWORD
+# Beget Cloud (NOT OpenStack — proprietary API)
+BEGET_TOKEN                Bearer token from Beget control panel → API access
+BEGET_REGION               ru1 | ru2 | kz1 | eu1
+BEGET_SOFTWARE_ID          Ubuntu 22.04 software ID (query once via data source)
+BEGET_SSH_KEY_ID           ID of SSH key registered in Beget account
+
+# SSH bootstrap key (private key PEM — must match BEGET_SSH_KEY_ID public key)
+AGENT_SSH_PRIVATE_KEY      -----BEGIN OPENSSH PRIVATE KEY-----...
 
 TF_WORKSPACE_BASE          /var/lib/tf-workspaces   (PVC-backed)
 TF_STATE_CONN_STR          postgres DSN for terraform pg backend
@@ -1043,4 +1069,7 @@ GET /api/v1/projects/{projectId}/environments/{envId}/apps/{appName}/logs
 | Log shipping: Filebeat or Docker log driver? | Filebeat in Docker container (more flexible, no daemon changes) |
 | Prometheus Agent vs full Prometheus on VM? | Agent mode (`--enable-feature=agent`) — no local storage, only remote_write |
 | Terraform state backend? | PostgreSQL pg backend, schema per AppServer workspace |
-| Edge endpoint: pre-create or auto-create? | Pre-create via API → get EdgeKey → pass to cloud-init → poll until connected |
+| Beget OpenStack API? | **No** — Beget has proprietary API only. Use `tf.beget.com/beget/beget` |
+| cloud-init on Beget? | **Not supported** via Terraform provider. Use SSH bootstrap script instead |
+| SSH key for bootstrap? | Pre-registered in Beget; private PEM in `AGENT_SSH_PRIVATE_KEY` env var |
+| Edge endpoint: pre-create or auto-create? | Pre-create via API → get EdgeKey + EdgeID → pass to SSH bootstrap script → poll Heartbeat |
