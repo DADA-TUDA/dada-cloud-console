@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      packages: write
 
     steps:
       - name: Checkout
@@ -71,6 +72,33 @@ jobs:
 
       - name: Docker build frontend image
         run: docker build -t dada-cloud-console-frontend:${GITHUB_SHA::8} -f frontend/Dockerfile frontend
+
+      - name: Docker build gitops-agent image
+        run: docker build -t dada-cloud-console-gitops-agent:${GITHUB_SHA::8} -f gitops-agent/Dockerfile gitops-agent
+
+      - name: Docker login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker push images
+        if: github.event_name != 'pull_request'
+        run: |
+          docker tag dada-cloud-console-backend:${GITHUB_SHA::8} ghcr.io/dadadevelopment/dada-cloud-console-backend:${GITHUB_SHA::8}
+          docker tag dada-cloud-console-frontend:${GITHUB_SHA::8} ghcr.io/dadadevelopment/dada-cloud-console-frontend:${GITHUB_SHA::8}
+          docker tag dada-cloud-console-gitops-agent:${GITHUB_SHA::8} ghcr.io/dadadevelopment/dada-cloud-console-gitops-agent:${GITHUB_SHA::8}
+          docker push ghcr.io/dadadevelopment/dada-cloud-console-backend:${GITHUB_SHA::8}
+          docker push ghcr.io/dadadevelopment/dada-cloud-console-frontend:${GITHUB_SHA::8}
+          docker push ghcr.io/dadadevelopment/dada-cloud-console-gitops-agent:${GITHUB_SHA::8}
+          docker tag ghcr.io/dadadevelopment/dada-cloud-console-backend:${GITHUB_SHA::8} ghcr.io/dadadevelopment/dada-cloud-console-backend:latest
+          docker tag ghcr.io/dadadevelopment/dada-cloud-console-frontend:${GITHUB_SHA::8} ghcr.io/dadadevelopment/dada-cloud-console-frontend:latest
+          docker tag ghcr.io/dadadevelopment/dada-cloud-console-gitops-agent:${GITHUB_SHA::8} ghcr.io/dadadevelopment/dada-cloud-console-gitops-agent:latest
+          docker push ghcr.io/dadadevelopment/dada-cloud-console-backend:latest
+          docker push ghcr.io/dadadevelopment/dada-cloud-console-frontend:latest
+          docker push ghcr.io/dadadevelopment/dada-cloud-console-gitops-agent:latest
 
       - name: Upload backend binary
         uses: actions/upload-artifact@v4
