@@ -264,7 +264,7 @@ spec:
                             set -eux
                             node -e "const p=require('./package.json'); process.exit(p.scripts && p.scripts.typecheck ? 0 : 1)" \
                               && npm run typecheck || echo "No typecheck script — skip"
-                            NEXT_PUBLIC_API_URL=/api npm run build
+                            npm run build
                         '''
                     }
                 }

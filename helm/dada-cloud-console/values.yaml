@@ -80,7 +80,7 @@ frontend:
     port: 3000
   env:
     NODE_ENV: production
-    NEXT_PUBLIC_API_URL: "/api"
+    NEXT_PUBLIC_API_URL: ""
   resources:
     requests:
       cpu: 100m
