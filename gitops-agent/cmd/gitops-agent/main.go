@@ -46,6 +46,10 @@ func main() {
 	dbw := worker.NewDBWatcher(pool, cfg)
 	gitw := worker.NewGitWatcher(pool, cfg, defaultMgr)
 
+	if err := dbw.BootstrapProjects(ctx); err != nil {
+		log.Fatal().Err(err).Msg("bootstrapping project manifests")
+	}
+
 	go dbw.Start(ctx)
 	go gitw.Start(ctx)
 

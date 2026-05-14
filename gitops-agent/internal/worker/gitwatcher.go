@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"path"
 	"regexp"
 	"time"
 
@@ -14,11 +13,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 )
 
 // appPathRe matches clusters/<cluster>/projects/<project>/environments/<env>/apps/<app>/app.yaml
 // Capture groups: 1=project, 2=env, 3=app
 var appPathRe = regexp.MustCompile(`^clusters/[^/]+/projects/([^/]+)/environments/([^/]+)/apps/([^/]+)/app\.yaml$`)
+
+// projectPathRe matches clusters/<cluster>/projects/<project>/project.yaml.
+// Capture group 1 is the project slug.
+var projectPathRe = regexp.MustCompile(`^clusters/[^/]+/projects/([^/]+)/project\.yaml$`)
+
+type projectManifest struct {
+	Project            string         `yaml:"project"`
+	DisplayName        string         `yaml:"displayName"`
+	OwnerType          string         `yaml:"ownerType"`
+	DefaultEnvironment string         `yaml:"defaultEnvironment"`
+	Quotas             map[string]any `yaml:"quotas"`
+}
 
 // GitWatcher polls remote repos for new commits and syncs them to the DB.
 type GitWatcher struct {
@@ -130,6 +142,10 @@ func (w *GitWatcher) syncRepo(ctx context.Context, mgr *git.Manager) error {
 
 func (w *GitWatcher) processCommit(ctx context.Context, mgr *git.Manager, c git.Commit) {
 	for _, filePath := range c.Files {
+		if m := projectPathRe.FindStringSubmatch(filePath); m != nil {
+			w.syncProjectFile(ctx, mgr, filePath, m[1], c)
+			continue
+		}
 		m := appPathRe.FindStringSubmatch(filePath)
 		if m == nil {
 			continue
@@ -139,9 +155,57 @@ func (w *GitWatcher) processCommit(ctx context.Context, mgr *git.Manager, c git.
 	}
 }
 
-func (w *GitWatcher) syncAppFile(ctx context.Context, mgr *git.Manager, filePath, projectSlug, envSlug, appName string, c git.Commit) {
-	_ = path.Base(filePath) // satisfy import
+func (w *GitWatcher) syncProjectFile(ctx context.Context, mgr *git.Manager, filePath, projectSlug string, c git.Commit) {
+	content, err := mgr.ReadFileAtCommit(c.SHA, filePath)
+	if err != nil {
+		log.Warn().Err(err).Str("project", projectSlug).Str("path", filePath).Msg("git-watcher: read project manifest")
+		return
+	}
 
+	var manifest projectManifest
+	if err := yaml.Unmarshal([]byte(content), &manifest); err != nil {
+		log.Warn().Err(err).Str("project", projectSlug).Str("path", filePath).Msg("git-watcher: parse project manifest")
+		return
+	}
+
+	name := manifest.Project
+	if name == "" {
+		name = projectSlug
+	}
+	displayName := manifest.DisplayName
+	if displayName == "" {
+		displayName = name
+	}
+	ownerType := manifest.OwnerType
+	if ownerType == "" {
+		ownerType = "team"
+	}
+	defaultEnvironment := manifest.DefaultEnvironment
+	if defaultEnvironment == "" {
+		defaultEnvironment = "prod"
+	}
+	quotas := manifest.Quotas
+	if quotas == nil {
+		quotas = map[string]any{}
+	}
+
+	quotasJSON, _ := json.Marshal(quotas)
+	if err := db.UpsertProject(ctx, w.pool, name, displayName, ownerType, defaultEnvironment, quotasJSON); err != nil {
+		log.Error().Err(err).Str("project", projectSlug).Str("path", filePath).Msg("git-watcher: upsert project")
+		return
+	}
+
+	if err := db.InsertCommit(ctx, w.pool,
+		c.SHA, mgr.RepoURL(), mgr.Branch(), filePath, c.Message,
+		c.Author, c.Email, nil, "manual",
+	); err != nil {
+		log.Warn().Err(err).Str("sha", c.SHA).Msg("git-watcher: record project commit")
+	}
+
+	log.Info().Str("project", name).Str("path", filePath).Msg("git-watcher: synced project manifest")
+}
+
+func (w *GitWatcher) syncAppFile(ctx context.Context, mgr *git.Manager, filePath, projectSlug, envSlug, appName string, c git.Commit) {
 	// Resolve project + environment IDs.
 	var projectID uuid.UUID
 	var environmentID uuid.UUID
@@ -176,7 +240,7 @@ func (w *GitWatcher) syncAppFile(ctx context.Context, mgr *git.Manager, filePath
 	// Record the commit in git_commits (no operation_id — originated in git).
 	if err := db.InsertCommit(ctx, w.pool,
 		c.SHA, mgr.RepoURL(), mgr.Branch(), filePath, c.Message,
-		c.Author, c.Email, nil, "git",
+		c.Author, c.Email, nil, "manual",
 	); err != nil {
 		log.Warn().Err(err).Str("sha", c.SHA).Msg("git-watcher: record commit")
 	}

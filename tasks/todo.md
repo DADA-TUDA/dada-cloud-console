@@ -1,3 +1,16 @@
+# Gitops Agent Project Sync
+
+- [x] Inspect the repo-local gitops-agent and current state-repo bootstrap behavior
+- [x] Add project bootstrap/write support so DB projects are mirrored to `project.yaml` in Git
+- [x] Add git→DB handling for `project.yaml` so manual git changes win and sync back into the `projects` table
+- [x] Update the state-repo init script and tests so first-start sync covers existing projects
+- [x] Verify the gitops-agent package and relevant tests locally
+- [ ] Push the branch after verification
+
+## Review
+
+Added a project-level GitOps bootstrap/sync path to `gitops-agent`: DB projects now bootstrap to `clusters/beget-prod/projects/<slug>/project.yaml`, git-side `project.yaml` files are parsed back into the `projects` table, and the init script now seeds `client-a/project.yaml` too. Verified with `go test ./...` inside `gitops-agent`.
+
 # Build on GitHub
 
 - [x] Reproduce the current GitHub build surface and identify the missing piece

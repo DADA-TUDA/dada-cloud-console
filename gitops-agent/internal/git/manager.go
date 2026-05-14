@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,6 +284,39 @@ func (m *Manager) ReadFile(relativePath string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, err := os.ReadFile(filepath.Join(m.path, relativePath))
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// ReadFileAtCommit returns the content of a file at a specific commit SHA.
+func (m *Manager) ReadFileAtCommit(commitSHA, relativePath string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	repo, err := gogit.PlainOpen(m.path)
+	if err != nil {
+		return "", fmt.Errorf("opening repo: %w", err)
+	}
+
+	commit, err := repo.CommitObject(plumbing.NewHash(commitSHA))
+	if err != nil {
+		return "", fmt.Errorf("loading commit %s: %w", commitSHA, err)
+	}
+
+	file, err := commit.File(relativePath)
+	if err != nil {
+		return "", err
+	}
+
+	r, err := file.Reader()
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+
+	b, err := io.ReadAll(r)
 	if err != nil {
 		return "", err
 	}

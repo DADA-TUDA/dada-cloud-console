@@ -24,6 +24,18 @@ cat > clusters/beget-prod/projects/internal/project.yaml << 'EOF'
 # DADA Platform State — managed by DADA Cloud Console
 project: internal
 displayName: DADA Internal
+ownerType: team
+defaultEnvironment: prod
+quotas: {}
+EOF
+
+cat > clusters/beget-prod/projects/client-a/project.yaml << 'EOF'
+# DADA Platform State — managed by DADA Cloud Console
+project: client-a
+displayName: Client A Corp
+ownerType: client
+defaultEnvironment: prod
+quotas: {}
 EOF
 
 git add -A

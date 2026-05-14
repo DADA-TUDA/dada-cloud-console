@@ -3,7 +3,9 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/dada-tuda/console/gitops-agent/internal/config"
@@ -18,8 +20,8 @@ import (
 
 // DBWatcher polls the operations table and commits manifests to git.
 type DBWatcher struct {
-	pool    *pgxpool.Pool
-	cfg     *config.Config
+	pool     *pgxpool.Pool
+	cfg      *config.Config
 	managers map[string]*git.Manager // keyed by repoURL
 }
 
@@ -52,6 +54,63 @@ func (w *DBWatcher) Start(ctx context.Context) {
 			w.poll(ctx)
 		}
 	}
+}
+
+// BootstrapProjects mirrors DB projects into git before the steady-state watcher starts.
+// Git remains authoritative if a project.yaml already exists.
+func (w *DBWatcher) BootstrapProjects(ctx context.Context) error {
+	projects, err := db.ListProjects(ctx, w.pool)
+	if err != nil {
+		return err
+	}
+
+	for _, project := range projects {
+		mgr, err := w.managerFor(ctx, project.ID)
+		if err != nil {
+			return err
+		}
+		if err := mgr.EnsureCloned(); err != nil {
+			return err
+		}
+
+		gitPath := renderer.ProjectGitPath(project.Name)
+		if _, err := mgr.ReadFile(gitPath); err == nil {
+			log.Debug().Str("project", project.Name).Str("path", gitPath).Msg("db-watcher: project already present in git")
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+
+		yaml, err := renderer.RenderProject(renderer.ProjectSpec{
+			Project:            project.Name,
+			DisplayName:        project.DisplayName,
+			OwnerType:          project.OwnerType,
+			DefaultEnvironment: project.DefaultEnvironment,
+			Quotas:             map[string]any{},
+		})
+		if err != nil {
+			return err
+		}
+
+		commitMsg := fmt.Sprintf(
+			"[DADA Console] Bootstrap project %s\n\nProject: %s\n",
+			project.DisplayName, project.Name,
+		)
+		sha, err := mgr.CommitAndPush(gitPath, yaml, commitMsg, w.cfg.BotName, w.cfg.BotEmail)
+		if err != nil {
+			return err
+		}
+		if err := db.InsertCommit(ctx, w.pool,
+			sha, mgr.RepoURL(), mgr.Branch(), gitPath, commitMsg,
+			w.cfg.BotName, w.cfg.BotEmail, nil, "agent",
+		); err != nil {
+			log.Warn().Err(err).Str("project", project.Name).Msg("db-watcher: record bootstrap commit")
+		}
+
+		log.Info().Str("project", project.Name).Str("path", gitPath).Str("sha", sha).Msg("db-watcher: bootstrapped project manifest")
+	}
+
+	return nil
 }
 
 func (w *DBWatcher) poll(ctx context.Context) {

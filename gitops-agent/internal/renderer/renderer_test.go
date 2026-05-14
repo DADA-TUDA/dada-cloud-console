@@ -152,6 +152,32 @@ func TestRenderPublicApi_NoAuth(t *testing.T) {
 	}
 }
 
+func TestRenderProject(t *testing.T) {
+	spec := renderer.ProjectSpec{
+		Project:            "client-a",
+		DisplayName:        "Client A Corp",
+		OwnerType:          "client",
+		DefaultEnvironment: "prod",
+	}
+	got, err := renderer.RenderProject(spec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantSubstrings := []string{
+		"project: client-a",
+		"displayName: Client A Corp",
+		"ownerType: client",
+		"defaultEnvironment: prod",
+		"quotas: {}",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered Project missing %q\nFull output:\n%s", want, got)
+		}
+	}
+}
+
 func TestGitPaths(t *testing.T) {
 	tests := []struct {
 		name string
@@ -172,6 +198,11 @@ func TestGitPaths(t *testing.T) {
 			"PublicApiGitPath",
 			renderer.PublicApiGitPath("alpha", "prod", "api", "main"),
 			"clusters/beget-prod/projects/alpha/environments/prod/apps/api/publicapi-main.yaml",
+		},
+		{
+			"ProjectGitPath",
+			renderer.ProjectGitPath("alpha"),
+			"clusters/beget-prod/projects/alpha/project.yaml",
 		},
 	}
 	for _, tt := range tests {
