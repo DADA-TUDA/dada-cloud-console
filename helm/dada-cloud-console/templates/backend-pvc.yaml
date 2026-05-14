@@ -9,6 +9,8 @@ spec:
   accessModes: ["ReadWriteOnce"]
   {{- if .Values.backend.persistence.storageClassName }}
   storageClassName: {{ .Values.backend.persistence.storageClassName | quote }}
+  {{- else if .Values.global.storageClassName }}
+  storageClassName: {{ .Values.global.storageClassName | quote }}
   {{- end }}
   resources:
     requests:

@@ -11,6 +11,8 @@ spec:
     - ReadWriteOnce
   {{- if .Values.gitopsAgent.persistence.storageClassName }}
   storageClassName: {{ .Values.gitopsAgent.persistence.storageClassName }}
+  {{- else if .Values.global.storageClassName }}
+  storageClassName: {{ .Values.global.storageClassName }}
   {{- end }}
   resources:
     requests:

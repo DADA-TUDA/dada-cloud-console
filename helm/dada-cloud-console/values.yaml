@@ -4,6 +4,9 @@ global:
     - name: github-container-registry
   labels:
     app.kubernetes.io/part-of: dada-cloud
+  # Default storage class for persistent volumes (can be overridden per-component)
+  # Use "local-path" for local development or set to your cluster's default
+  storageClassName: "local-path"
 
 backend:
   enabled: true
@@ -25,7 +28,6 @@ backend:
   persistence:
     enabled: true
     size: 5Gi
-    storageClassName: ""
   resources:
     requests:
       cpu: 100m
@@ -59,7 +61,6 @@ gitopsAgent:
   persistence:
     enabled: true
     size: 10Gi
-    storageClassName: ""
   resources:
     requests:
       cpu: 50m
