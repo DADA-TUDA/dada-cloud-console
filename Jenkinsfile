@@ -6,10 +6,11 @@ def NODE_BUILDER_IMAGE = "node:${NODE_VERSION}-bookworm"
 def DOCKER_CLI_IMAGE   = 'docker:29-cli'
 def DOCKER_DIND_IMAGE  = 'docker:29-dind'
 
-def GITHUB_REGISTRY  = 'ghcr.io'
-def GITHUB_ORG       = 'dada-tuda'
-def BACKEND_IMAGE   = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-backend"
-def FRONTEND_IMAGE  = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-frontend"
+def GITHUB_REGISTRY      = 'ghcr.io'
+def GITHUB_ORG           = 'dadadevelopment'
+def BACKEND_IMAGE        = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-backend"
+def FRONTEND_IMAGE       = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-frontend"
+def GITOPS_AGENT_IMAGE   = "${GITHUB_REGISTRY}/${GITHUB_ORG}/dada-cloud-console-gitops-agent"
 
 def podLabel  = "kubeagent-${env.JOB_BASE_NAME ?: 'job'}-${env.BUILD_NUMBER ?: 'manual'}"
         .replaceAll('[^A-Za-z0-9-]', '-')
@@ -280,6 +281,9 @@ spec:
                         docker build \\
                           -t ${FRONTEND_IMAGE}:${resolvedTag} \\
                           -f frontend/Dockerfile frontend
+                        docker build \\
+                          -t ${GITOPS_AGENT_IMAGE}:${resolvedTag} \\
+                          -f gitops-agent/Dockerfile gitops-agent
                     """
                 }
 
@@ -303,7 +307,8 @@ spec:
                                 echo "\${GITHUB_TOKEN}" | docker login ${GITHUB_REGISTRY} -u \${GITHUB_USERNAME} --password-stdin
                                 docker push ${BACKEND_IMAGE}:${resolvedTag}
                                 docker push ${FRONTEND_IMAGE}:${resolvedTag}
-                                docker rmi ${BACKEND_IMAGE}:${resolvedTag} ${FRONTEND_IMAGE}:${resolvedTag} || true
+                                docker push ${GITOPS_AGENT_IMAGE}:${resolvedTag}
+                                docker rmi ${BACKEND_IMAGE}:${resolvedTag} ${FRONTEND_IMAGE}:${resolvedTag} ${GITOPS_AGENT_IMAGE}:${resolvedTag} || true
                             """
                         }
                     }
@@ -319,8 +324,9 @@ spec:
 
         if (currentBuild.result != 'FAILURE') {
             echo "✅ DADA Cloud Console — ${resolvedTag}"
-            echo "   Backend:  ${BACKEND_IMAGE}:${resolvedTag}"
-            echo "   Frontend: ${FRONTEND_IMAGE}:${resolvedTag}"
+            echo "   Backend:      ${BACKEND_IMAGE}:${resolvedTag}"
+            echo "   Frontend:     ${FRONTEND_IMAGE}:${resolvedTag}"
+            echo "   GitOps Agent: ${GITOPS_AGENT_IMAGE}:${resolvedTag}"
         }
     }
 }
