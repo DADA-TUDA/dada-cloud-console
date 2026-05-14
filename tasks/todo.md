@@ -5,11 +5,11 @@
 - [x] Add git→DB handling for `project.yaml` so manual git changes win and sync back into the `projects` table
 - [x] Update the state-repo init script and tests so first-start sync covers existing projects
 - [x] Verify the gitops-agent package and relevant tests locally
-- [ ] Push the branch after verification
+- [x] Push the branch after verification
 
 ## Review
 
-Added a project-level GitOps bootstrap/sync path to `gitops-agent`: DB projects now bootstrap to `clusters/beget-prod/projects/<slug>/project.yaml`, git-side `project.yaml` files are parsed back into the `projects` table, and the init script now seeds `client-a/project.yaml` too. Verified with `go test ./...` inside `gitops-agent`.
+Added a project-level GitOps bootstrap/sync path to `gitops-agent`: DB projects now bootstrap to `clusters/beget-prod/projects/<slug>/project.yaml`, git-side `project.yaml` files are parsed back into the `projects` table, and the init script now seeds `client-a/project.yaml` too. Verified with `go test ./...` inside `gitops-agent` and pushed to `main`.
 
 # Build on GitHub
 
