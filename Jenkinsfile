@@ -308,6 +308,12 @@ spec:
                                 docker push ${BACKEND_IMAGE}:${resolvedTag}
                                 docker push ${FRONTEND_IMAGE}:${resolvedTag}
                                 docker push ${GITOPS_AGENT_IMAGE}:${resolvedTag}
+                                docker tag ${BACKEND_IMAGE}:${resolvedTag} ${BACKEND_IMAGE}:latest
+                                docker tag ${FRONTEND_IMAGE}:${resolvedTag} ${FRONTEND_IMAGE}:latest
+                                docker tag ${GITOPS_AGENT_IMAGE}:${resolvedTag} ${GITOPS_AGENT_IMAGE}:latest
+                                docker push ${BACKEND_IMAGE}:latest
+                                docker push ${FRONTEND_IMAGE}:latest
+                                docker push ${GITOPS_AGENT_IMAGE}:latest
                                 docker rmi ${BACKEND_IMAGE}:${resolvedTag} ${FRONTEND_IMAGE}:${resolvedTag} ${GITOPS_AGENT_IMAGE}:${resolvedTag} || true
                             """
                         }
