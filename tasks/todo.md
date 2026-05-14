@@ -8,3 +8,14 @@
 ## Review
 
 Added a GitHub Actions workflow that mirrors the release build path from Jenkins and uploads the releaseable backend/frontend artifacts.
+
+## 2026-05-14 console API base URL fix
+
+- [x] Find why production frontend still targets `localhost:8080`
+- [x] Move the local-dev API URL out of the production build path
+- [x] Align Helm and CI on `NEXT_PUBLIC_API_URL=/api`
+- [x] Render-check the Helm chart and confirm the config now matches the runtime intent
+
+## Review
+
+Production frontend had a build-time env leak: `frontend/.env.local` set `NEXT_PUBLIC_API_URL=http://localhost:8080`, and Next.js inlined that into the client bundle. I moved the local-only value to `frontend/.env.development.local`, set the CI frontend build to `NEXT_PUBLIC_API_URL=/api`, and renamed the Helm value key to `NEXT_PUBLIC_API_URL` so the chart matches the code.

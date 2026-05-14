@@ -36,6 +36,7 @@ metadata:
     app.kubernetes.io/part-of: dada-cloud-console
     app.kubernetes.io/managed-by: jenkins
 spec:
+  priorityClassName: java-critical
   securityContext:
     fsGroup: 1000
   volumes:
