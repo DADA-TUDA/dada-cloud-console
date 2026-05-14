@@ -45,11 +45,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DatabaseURL:     getEnv("DATABASE_URL", ""),
+		DatabaseURL:     getEnv("DATABASE_URL", getEnv("DB_URL", "")),
 		DefaultRepoURL:  getEnv("GITOPS_DEFAULT_REPO_URL", ""),
 		DefaultBranch:   getEnv("GITOPS_DEFAULT_BRANCH", "main"),
-		DefaultUsername: getEnv("GITOPS_DEFAULT_USERNAME", ""),
-		DefaultToken:    getEnv("GITOPS_DEFAULT_TOKEN", ""),
+		DefaultUsername: getEnv("GITOPS_DEFAULT_USERNAME", getEnv("GIT_USERNAME", "")),
+		DefaultToken:    getEnv("GITOPS_DEFAULT_TOKEN", getEnv("GIT_TOKEN", "")),
 		RepoLocalPath:   getEnv("GITOPS_REPO_LOCAL_PATH", "/var/lib/gitops-repos"),
 		BotName:         getEnv("GITOPS_BOT_NAME", "DADA Platform Bot"),
 		BotEmail:        getEnv("GITOPS_BOT_EMAIL", "bot@dada-tuda.ru"),

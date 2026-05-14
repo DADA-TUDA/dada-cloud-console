@@ -19,11 +19,11 @@ backend:
     port: 8080
   env:
     APP_ENV: production
-    HTTP_PORT: "8080"
+    PORT: "8080"
     ARGO_CLUSTER_NAME: ""
   existingSecret: ""
   secret:
-    DATABASE_URL: "postgres://dada:change-me@postgresql:5432/dada_console?sslmode=disable"
+    DB_URL: "postgres://dada:change-me@postgresql:5432/dada_console?sslmode=disable"
     JWT_SECRET: "change-me"
   persistence:
     enabled: true

@@ -19,9 +19,9 @@ type Config struct {
 // Returns an error if any required variable is missing.
 func Load() (*Config, error) {
 	cfg := &Config{
-		DBURL:       getEnv("DB_URL", ""),
+		DBURL:       getEnv("DB_URL", getEnv("DATABASE_URL", "")),
 		JWTSecret:   getEnv("JWT_SECRET", ""),
-		Port:        getEnv("PORT", "8080"),
+		Port:        getEnv("PORT", getEnv("HTTP_PORT", "8080")),
 		LogLevel:    getEnv("LOG_LEVEL", "info"),
 		DevMode:     getEnv("DEV_MODE", "false") == "true",
 		ClusterLBIP: getEnv("CLUSTER_LB_IP", "93.189.231.60"),
